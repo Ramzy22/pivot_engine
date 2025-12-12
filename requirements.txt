@@ -1,0 +1,13 @@
+# Core Dependencies
+duckdb>=0.8.0
+pyarrow>=10.0.0
+ibis-framework>=4.0.0; extra != "no-ibis"
+pandas>=1.5.0
+
+# Optional FastAPI Integration (for REST API)
+fastapi>=0.100.0; extra != "no-api"
+uvicorn[standard]>=0.20.0; extra != "no-api"
+
+# Development & Testing
+pytest>=7.0.0
+pytest-asyncio>=0.20.0
