@@ -1,6 +1,6 @@
-# Scalable Pivot Engine
+# Pivot Engine
 
-A high-performance, scalable pivot engine optimized for millions of rows with advanced features including real-time updates, hierarchical data processing, and TanStack integration.
+A high-performance, scalable pivot engine optimized for large datasets with advanced features including real-time updates, hierarchical data processing, and TanStack integration.
 
 ## 🚀 Features
 
@@ -10,7 +10,7 @@ A high-performance, scalable pivot engine optimized for millions of rows with ad
 - **Distributed caching** - L1/L2 caching with various backends
 - **Tile-aware processing** - Smart chunking for virtual scrolling
 
-### Advanced Pivot Features  
+### Advanced Pivot Features
 - **Hierarchical data processing** - Multi-level pivot with drill-down support
 - **Virtual scrolling** - Efficient rendering for large hierarchical datasets
 - **Progressive loading** - Load data in chunks as needed
@@ -33,7 +33,7 @@ A high-performance, scalable pivot engine optimized for millions of rows with ad
 
 - **DuckDB** (Primary, optimized)
 - **ClickHouse** (via Ibis)
-- **PostgreSQL** (via Ibis) 
+- **PostgreSQL** (via Ibis)
 - **MySQL** (via Ibis)
 - **BigQuery** (via Ibis)
 - **Snowflake** (via Ibis)
@@ -100,8 +100,8 @@ app = api.get_app()  # FastAPI app
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/scalable-pivot-engine.git
-cd scalable-pivot-engine
+git clone https://github.com/Ramzy22/pivot_engine.git
+cd pivot_engine
 
 # Install dependencies
 pip install -e .
@@ -196,7 +196,7 @@ MIT License - See `LICENSE` file for details.
 
 ## 📞 Support
 
-- Report issues on [GitHub Issues](https://github.com/yourusername/scalable-pivot-engine/issues)
+- Report issues on [GitHub Issues](https://github.com/Ramzy22/pivot_engine/issues)
 - For questions, open a discussion
 
 ## 🙏 Acknowledgments
