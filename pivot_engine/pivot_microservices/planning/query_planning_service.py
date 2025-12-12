@@ -3,10 +3,10 @@ query_planning_service.py - Microservice for query planning in distributed archi
 """
 import asyncio
 import json
-from typing import Dict, Any, Optional
-from ..planner.sql_planner import SQLPlanner
-from ..planner.ibis_planner import IbisPlanner
-from ..types.pivot_spec import PivotSpec
+from typing import Dict, Any, List, Optional
+from ....planner.sql_planner import SQLPlanner
+from ....planner.ibis_planner import IbisPlanner
+from ....types.pivot_spec import PivotSpec, Measure, NullHandling
 
 
 class QueryPlanningService:
@@ -29,10 +29,10 @@ class QueryPlanningService:
         plan = await planner.plan(spec)
         
         # Apply cost-based optimization
-        optimized_plan = await self._optimize_plan(plan, spec, context)
+        optimized_plan = await self._apply_optimization_plan(plan, spec, context)
         
         return optimized_plan
-    
+
     async def _select_optimal_planner(self, spec: PivotSpec, context: Optional[Dict[str, Any]] = None):
         """Select optimal planner based on data characteristics"""
         # Get table size estimate if available in context
@@ -45,8 +45,8 @@ class QueryPlanningService:
             return self.planners['sql']  # Optimized for hierarchies
         else:
             return self.planners['sql']
-    
-    async def _optimize_plan(self, plan: Dict[str, Any], spec: PivotSpec, context: Optional[Dict[str, Any]] = None):
+
+    async def _apply_optimization_plan(self, plan: Dict[str, Any], spec: PivotSpec, context: Optional[Dict[str, Any]] = None):
         """Apply cost-based optimization to the plan"""
         # Calculate initial cost
         initial_cost = await self.cost_estimator.estimate_cost(plan, spec, context)

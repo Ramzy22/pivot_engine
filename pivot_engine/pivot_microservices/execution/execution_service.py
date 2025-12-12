@@ -1,5 +1,5 @@
 """
-execution_service.py - Microservice for distributed query execution
+execution_service.py - Distributed query execution service
 """
 import asyncio
 from typing import Dict, Any, List, Optional
@@ -137,8 +137,6 @@ class ExecutionService:
         
         # For aggregation queries, we need to merge the aggregations appropriately
         # This is complex and depends on the aggregation types
-        # For SUM and COUNT, we can add them directly
-        # For AVG, MIN, MAX, we need special handling
         # For this example, we'll just concatenate (which works for group-by queries)
         
         try:

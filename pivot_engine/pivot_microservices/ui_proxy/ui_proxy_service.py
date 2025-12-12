@@ -250,10 +250,6 @@ class UIPivotService:
                         
             except WebSocketDisconnect:
                 pass  # Connection closed
-    
-    def get_app(self):
-        """Get the FastAPI application"""
-        return self.app
 
 
 # Example usage function

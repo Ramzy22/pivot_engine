@@ -1,20 +1,23 @@
 """
 HierarchicalVirtualScrollManager - Optimized virtual scrolling for hierarchical data
 """
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 import pyarrow as pa
-import ibis
-from ibis.expr.api import Table as IbisTable
 
 from pivot_engine.types.pivot_spec import PivotSpec
 from pivot_engine.materialized_hierarchy_manager import MaterializedHierarchyManager
 from pivot_engine.planner.ibis_planner import IbisPlanner
+from pivot_engine.planner.sql_planner import SQLPlanner
 
 
 class HierarchicalVirtualScrollManager:
-    def __init__(self, planner: IbisPlanner, cache, materialized_hierarchy_manager: MaterializedHierarchyManager):
+    def __init__(self, planner: Union[IbisPlanner, SQLPlanner], cache, materialized_hierarchy_manager: MaterializedHierarchyManager):
         self.planner = planner
-        self.backend = self.planner.con  # Use the Ibis connection as the backend
+        # Handle both IbisPlanner and SQLPlanner - only IbisPlanner has .con attribute
+        if hasattr(planner, 'con'):
+            self.backend = planner.con  # Use the Ibis connection as the backend
+        else:
+            self.backend = None  # For SQLPlanner, we'll handle differently
         self.cache = cache
         self.materialized_hierarchy_manager = materialized_hierarchy_manager
         self.cache_ttl = 300  # 5 minutes default
@@ -54,94 +57,104 @@ class HierarchicalVirtualScrollManager:
         cache_key_str = json.dumps(cache_data, sort_keys=True)
         return f"hier_scroll_ibis:{hashlib.sha256(cache_key_str.encode()).hexdigest()[:16]}"
 
-    def _build_hierarchical_ibis_expr(self, spec: PivotSpec, expanded_paths: List[List[str]], offset: int, limit: int) -> Optional[IbisTable]:
-        """Build a query for a tile of hierarchical data using Ibis expressions."""
-        union_expressions = []
-        con = self.planner.con
+    def _build_hierarchical_ibis_expr(self, spec: PivotSpec, expanded_paths: List[List[str]], offset: int, limit: int):
+        """Build a query for a tile of hierarchical data using Ibis expressions or fallback."""
+        # Check if we have an IbisPlanner (with connection) to use Ibis expressions
+        if self.backend is not None:
+            import ibis
+            from ibis.expr.api import Table as IbisTable
 
-        all_dims = spec.rows
-        all_measures_aliases = [m.alias for m in spec.measures]
-        
-        # 1. Base query for top-level items (level 1)
-        level_1_table_name = self.materialized_hierarchy_manager.get_rollup_table_name(spec, 1)
-        if not level_1_table_name:
-            return None  # Hierarchy must be materialized
+            union_expressions = []
+            con = self.planner.con
 
-        level_1_table = con.table(level_1_table_name)
-        
-        # Project all dimension and measure columns to ensure UNION compatibility
-        projection_l1 = []
-        level_1_dims = spec.rows[:1]
-        for dim in all_dims:
-            if dim in level_1_dims:
-                projection_l1.append(level_1_table[dim])
-            else:
-                projection_l1.append(ibis.literal(None, type='str').name(dim))
-        
-        for measure_alias in all_measures_aliases:
-            if measure_alias in level_1_table.columns:
-                projection_l1.append(level_1_table[measure_alias])
-            else:
-                # This case should ideally not happen if rollup tables are correct
-                projection_l1.append(ibis.literal(0).name(measure_alias))
+            all_dims = spec.rows
+            all_measures_aliases = [m.alias for m in spec.measures]
 
-        union_expressions.append(level_1_table.select(projection_l1))
+            # 1. Base query for top-level items (level 1)
+            level_1_table_name = self.materialized_hierarchy_manager.get_rollup_table_name(spec, 1)
+            if not level_1_table_name:
+                return None  # Hierarchy must be materialized
 
-        # 2. Queries for children of expanded paths
-        valid_expanded_paths = [p for p in expanded_paths if p]
-        for path in valid_expanded_paths:
-            level = len(path) + 1
-            if level > len(all_dims):
-                continue
-            
-            rollup_table_name = self.materialized_hierarchy_manager.get_rollup_table_name(spec, level)
-            if not rollup_table_name:
-                continue
+            level_1_table = con.table(level_1_table_name)
 
-            rollup_table = con.table(rollup_table_name)
-            
-            # Apply filters for the path
-            filter_expr = None
-            for i, val in enumerate(path):
-                dim_name = all_dims[i]
-                condition = (rollup_table[dim_name] == val)
-                if filter_expr is None:
-                    filter_expr = condition
-                else:
-                    filter_expr &= condition
-            
-            if filter_expr is not None:
-                rollup_table = rollup_table.filter(filter_expr)
-
-            # Project columns
-            projection_level = []
-            level_dims = spec.rows[:level]
+            # Project all dimension and measure columns to ensure UNION compatibility
+            projection_l1 = []
+            level_1_dims = spec.rows[:1]
             for dim in all_dims:
-                if dim in level_dims:
-                    projection_level.append(rollup_table[dim])
+                if dim in level_1_dims:
+                    projection_l1.append(level_1_table[dim])
                 else:
-                    projection_level.append(ibis.literal(None, type='str').name(dim))
+                    projection_l1.append(ibis.literal(None, type='str').name(dim))
 
             for measure_alias in all_measures_aliases:
-                 if measure_alias in rollup_table.columns:
-                    projection_level.append(rollup_table[measure_alias])
-                 else:
-                    projection_level.append(ibis.literal(0).name(measure_alias))
+                if measure_alias in level_1_table.columns:
+                    projection_l1.append(level_1_table[measure_alias])
+                else:
+                    # This case should ideally not happen if rollup tables are correct
+                    projection_l1.append(ibis.literal(0).name(measure_alias))
 
-            union_expressions.append(rollup_table.select(projection_level))
+            union_expressions.append(level_1_table.select(projection_l1))
 
-        if not union_expressions:
+            # 2. Queries for children of expanded paths
+            valid_expanded_paths = [p for p in expanded_paths if p]
+            for path in valid_expanded_paths:
+                level = len(path) + 1
+                if level > len(all_dims):
+                    continue
+
+                rollup_table_name = self.materialized_hierarchy_manager.get_rollup_table_name(spec, level)
+                if not rollup_table_name:
+                    continue
+
+                rollup_table = con.table(rollup_table_name)
+
+                # Apply filters for the path
+                filter_expr = None
+                for i, val in enumerate(path):
+                    dim_name = all_dims[i]
+                    condition = (rollup_table[dim_name] == val)
+                    if filter_expr is None:
+                        filter_expr = condition
+                    else:
+                        filter_expr &= condition
+
+                if filter_expr is not None:
+                    rollup_table = rollup_table.filter(filter_expr)
+
+                # Project columns
+                projection_level = []
+                level_dims = spec.rows[:level]
+                for dim in all_dims:
+                    if dim in level_dims:
+                        projection_level.append(rollup_table[dim])
+                    else:
+                        projection_level.append(ibis.literal(None, type='str').name(dim))
+
+                for measure_alias in all_measures_aliases:
+                     if measure_alias in rollup_table.columns:
+                        projection_level.append(rollup_table[measure_alias])
+                     else:
+                        projection_level.append(ibis.literal(0).name(measure_alias))
+
+                union_expressions.append(rollup_table.select(projection_level))
+
+            if not union_expressions:
+                return None
+
+            # 3. Combine into a single expression
+            final_expr = ibis.union(*union_expressions)
+
+            # 4. Apply final ordering and pagination
+            order_by_cols = [ibis.asc(dim, nulls_first=True) for dim in all_dims]
+            final_expr = final_expr.order_by(order_by_cols)
+            final_expr = final_expr.limit(limit, offset=offset)
+
+            return final_expr
+        else:
+            # Fallback for SQLPlanner - return None or use alternative implementation
+            # For now, we'll return None as the IbisPlanner is required for this functionality
+            # In a more complete implementation, we'd have a SQL-based alternative
             return None
-
-        # 3. Combine into a single expression
-        final_expr = ibis.union(*union_expressions)
-        
-        # 4. Apply final ordering and pagination
-        order_by_cols = [ibis.asc(dim, nulls_first=True) for dim in all_dims]
-        final_expr = final_expr.order_by(order_by_cols)
-        final_expr = final_expr.limit(limit, offset=offset)
-        
-        return final_expr
     
     def _format_for_ui(self, data, expanded_paths: List[List[str]]):
         """Format data for UI consumption"""

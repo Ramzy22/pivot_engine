@@ -1,17 +1,17 @@
 """
-caching_service.py - Microservice for distributed caching
+caching_service.py - Distributed caching service for pivot results
 """
 import asyncio
 import json
 import hashlib
 from typing import Dict, Any, Optional, Union
 import pyarrow as pa
-from ...cache.memory_cache import MemoryCache
-from ...cache.redis_cache import RedisCache
-from ...types.pivot_spec import PivotSpec
+from ..cache.memory_cache import MemoryCache
+from ..cache.redis_cache import RedisCache
+from ..types.pivot_spec import PivotSpec
 
 
-class CachingService:
+class CacheService:
     """Distributed caching service for pivot results"""
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -222,100 +222,7 @@ class CachingService:
 class DistributedCacheService:
     """Higher-level service for distributed caching with additional features"""
     
-    def __init__(self, caching_service: CachingService):
+    def __init__(self, caching_service: CacheService):
         self.caching_service = caching_service
         self.pipelines = {}  # Cache pipelines for different use cases
         self.subscribers = []  # For cache change notifications
-    
-    async def get_pivot_result(self, spec: PivotSpec, 
-                             compute_function,
-                             use_pipeline: str = 'default') -> Any:
-        """Get pivot result using appropriate caching pipeline"""
-        cache_key = self.caching_service.generate_cache_key(spec)
-        
-        # Select pipeline
-        pipeline = self._get_pipeline(use_pipeline)
-        
-        # Apply pipeline
-        for middleware in pipeline:
-            cache_key = await middleware.process_key(cache_key, spec)
-        
-        # Get or compute result
-        result = await self.caching_service.get_or_compute(
-            cache_key, 
-            compute_function,
-            ttl=spec.to_dict().get('cache_ttl', 300)
-        )
-        
-        # Post-process result
-        for middleware in reversed(pipeline):
-            result = await middleware.post_process_result(result, spec)
-        
-        return result
-    
-    def _get_pipeline(self, name: str):
-        """Get caching pipeline by name"""
-        if name not in self.pipelines:
-            # Default pipeline
-            self.pipelines[name] = [
-                CompressionMiddleware(),
-                SerializationMiddleware(),
-                ValidationMiddleware()
-            ]
-        return self.pipelines[name]
-    
-    async def notify_cache_change(self, key: str, change_type: str):
-        """Notify subscribers of cache changes"""
-        for subscriber in self.subscribers:
-            await subscriber.on_cache_change(key, change_type)
-
-
-class CacheMiddleware:
-    """Base class for cache middleware"""
-    
-    async def process_key(self, key: str, spec: PivotSpec) -> str:
-        """Process cache key"""
-        return key
-    
-    async def post_process_result(self, result: Any, spec: PivotSpec) -> Any:
-        """Post-process cached result"""
-        return result
-
-
-class CompressionMiddleware(CacheMiddleware):
-    """Compression middleware for cache values"""
-    
-    async def post_process_result(self, result: Any, spec: PivotSpec) -> Any:
-        """Decompress result if it was compressed"""
-        # This would be handled by the caching service itself
-        return result
-
-
-class SerializationMiddleware(CacheMiddleware):
-    """Serialization middleware for cache values"""
-    
-    async def process_key(self, key: str, spec: PivotSpec) -> str:
-        """Add serialization format to key"""
-        return f"serialize:{key}"
-    
-    async def post_process_result(self, result: Any, spec: PivotSpec) -> Any:
-        """Deserialize result"""
-        return result
-
-
-class ValidationMiddleware(CacheMiddleware):
-    """Validation middleware for cache values"""
-    
-    async def post_process_result(self, result: Any, spec: PivotSpec) -> Any:
-        """Validate result against spec"""
-        # Add validation metadata
-        if isinstance(result, dict):
-            result['_validation'] = {
-                'spec_hash': hash(str(spec.to_dict())),
-                'validated_at': self._get_timestamp()
-            }
-        return result
-    
-    def _get_timestamp(self):
-        import time
-        return time.time()
