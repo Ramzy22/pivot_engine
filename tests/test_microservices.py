@@ -6,9 +6,9 @@ import asyncio
 from unittest.mock import Mock, AsyncMock
 import pyarrow as pa
 from pivot_engine.scalable_pivot_controller import ScalablePivotController
-from pivot_engine.scalable_pivot_engine.pivot_microservices.caching.caching_service import CachingService
-from pivot_engine.scalable_pivot_engine.pivot_microservices.execution.execution_service import ExecutionService
-from pivot_engine.scalable_pivot_engine.pivot_microservices.planning.query_planning_service import QueryPlanningService
+from pivot_engine.pivot_microservices.caching.caching_service import CachingService
+from pivot_engine.pivot_microservices.execution.execution_service import ExecutionService
+from pivot_engine.pivot_microservices.planning.query_planning_service import QueryPlanningService
 
 
 @pytest.fixture

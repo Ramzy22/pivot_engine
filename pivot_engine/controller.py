@@ -35,7 +35,7 @@ class PivotController:
         backend_uri: str = ":memory:",
         cache: Union[str, Any] = "memory",
         planner: Optional[Any] = None,
-        planner_name: str = "sql",
+        planner_name: str = "ibis",
         enable_tiles: bool = True,
         enable_delta: bool = True,
         tile_size: int = 100,
@@ -132,6 +132,7 @@ class PivotController:
             enable_delta_updates=enable_delta
         )
         self.tree_manager = TreeExpansionManager(self)
+
         self._request_count = 0
         self._cache_hits = 0
         self._cache_misses = 0
@@ -401,6 +402,33 @@ class PivotController:
     ) -> Dict[str, Any]:
         """Run hierarchical pivot with optional prefetching of expanded nodes"""
         return self.tree_manager.run_hierarchical_pivot_with_prefetch(spec, path_cursor_map, prefetch_depth)
+
+    def clear_cache(self):
+        """Clear all cached queries to force fresh data retrieval"""
+        if hasattr(self, 'cache') and self.cache:
+            self.cache.clear()
+
+    def close(self):
+        """Close any resources held by the controller"""
+        if hasattr(self, 'backend') and hasattr(self.backend, 'close'):
+            self.backend.close()
+
+    def run_pivot_arrow(
+        self,
+        spec: Any,
+    ) -> pa.Table:
+        """
+        Execute a pivot query and return the result as a PyArrow Table.
+        This method is used by the Flight server for Arrow-native operations.
+        """
+        # Execute the pivot query and return the raw Arrow table
+        result = self.run_pivot(spec, return_format="arrow")
+        if isinstance(result, pa.Table):
+            return result
+        else:
+            # If for some reason it's not an Arrow table, convert it
+            # This would typically be the case if some error handling returns different format
+            raise ValueError(f"Expected PyArrow Table but got {type(result)}")
 
     def run_hierarchical_pivot_batch_load(
         self,

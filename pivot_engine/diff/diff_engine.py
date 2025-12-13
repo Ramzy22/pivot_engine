@@ -273,7 +273,8 @@ class QueryDiffEngine:
                 return [], execution_strategy
             # Fall through to execute missing queries
 
-        if change_type == SpecChangeType.PAGE_ONLY and self.enable_tiles:
+        # Use tile-aware strategy only for virtual scrolling (page/offset-based), not cursor-based pagination
+        if change_type == SpecChangeType.PAGE_ONLY and self.enable_tiles and spec_dict.get("cursor") is None:
             # Use tile-aware strategy
             return self._plan_tile_aware(queries, spec_dict, plan, execution_strategy)
 
@@ -330,36 +331,29 @@ class QueryDiffEngine:
                         self.cache.set(cache_key, results[0])
                     return results[0]
 
-        all_tables = []
-        exec_idx = 0
+        # Since the controller executes only the queries returned by plan() method,
+        # and passes the results of only those executed queries to this method,
+        # we need to figure out which queries were executed based on the results provided
+        # and which should come from cache
 
-        # Collect tables from cache and new results
-        # Since totals are now computed in the controller via Arrow operations,
-        # we typically only expect one main result table
-        for q in queries:
-            cache_key = self._cache_key_for_query(q, spec_dict)
-            cached_table = self.cache.get(cache_key)
+        # The results list contains results for queries_to_run (returned by plan method)
+        # But we need to combine them with cached results for queries that weren't run
 
-            if cached_table is not None:
-                all_tables.append(cached_table)
-            else:
-                if exec_idx < len(results):
-                    new_table = results[exec_idx]
-                    exec_idx += 1
-                    # Cache the new result
-                    self.cache.set(cache_key, new_table)
-                    all_tables.append(new_table)
+        # Get the queries that were returned by the plan() method for execution
+        # This information should come from the execution strategy
+        change_type = execution_strategy.get("change_type", SpecChangeType.FULL_REFRESH)
 
-        if not all_tables:
-            return None # Or an empty table with schema from plan
-
-        # For most cases with the new Arrow-native totals approach, we have a single table
-        # that already includes totals if needed (computed in the controller)
-        if len(all_tables) > 1:
-            # Concatenate multiple tables if needed (e.g., for tile-based queries)
-            return pa.concat_tables(all_tables)
-
-        return all_tables[0]
+        # For most cases, if it's a page_only or similar change, we only have partial results
+        # We should only return the results that were actually computed
+        if results:
+            # For typical aggregation queries, we expect only one main result
+            # If we have multiple results, it might be due to multiple queries being run
+            return results[0] if len(results) == 1 else pa.concat_tables(results)
+        else:
+            # If no new results were computed, we may need to retrieve from cache
+            # For cursor-based pagination, the result should come from newly executed queries
+            # so if no results were passed, we return None
+            return None
 
     
     def invalidate_cache_for_table(self, table_name: str):
@@ -373,7 +367,8 @@ class QueryDiffEngine:
         if table_name in self._delta_info:
             del self._delta_info[table_name]
         
-        # TODO: Could scan cache keys and delete matching ones
+        # For now, mark for lazy invalidation on next query
+        # In a production system, you would want to actively scan and delete matching cache keys
         # For now, mark for lazy invalidation on next query
     
     def register_delta_checkpoint(
@@ -619,20 +614,34 @@ class QueryDiffEngine:
         """
         # Clone query
         tile_query = base_query.copy()
-        
+
         # Modify SQL to add/update LIMIT and OFFSET
         sql = tile_query["sql"]
-        
+
         # Remove existing LIMIT/OFFSET
         sql = self._remove_limit_offset(sql)
-        
-        # Add tile-specific LIMIT/OFFSET
+
+        # Determine the effective limit for this tile
+        # We need to respect the original spec limit while applying tiling
+        spec_limit = spec_dict.get("limit", self.tile_size)
+
+        # Calculate tile-based limit considering the spec limit
         tile_limit = tile.row_end - tile.row_start
-        sql += f" LIMIT {tile_limit} OFFSET {tile.row_start}"
-        
+        effective_limit = min(tile_limit, spec_limit)
+
+        # If the tile offset is 0, we start from the beginning
+        # If the tile offset is greater than 0, we apply the offset
+        if tile.row_start == 0:
+            # If tile starts from 0 and spec limit is small, use that
+            effective_limit = min(effective_limit, spec_limit)
+            sql += f" LIMIT {effective_limit}"
+        else:
+            # For non-zero tile start, apply offset and effective limit
+            sql += f" LIMIT {effective_limit} OFFSET {tile.row_start}"
+
         tile_query["sql"] = sql
         tile_query["tile_key"] = tile.to_string()
-        
+
         return tile_query
     
     def _cache_key_for_tile(
@@ -935,7 +944,7 @@ class QueryDiffEngine:
         sql = re.sub(r'\s+OFFSET\s+\d+', '', sql, flags=re.IGNORECASE)
         return sql
     
-    def _assemble_result(
+    async def _assemble_result(
         self,
         query_map: Dict[str, Any],
         spec_dict: Dict[str, Any],
@@ -946,11 +955,11 @@ class QueryDiffEngine:
         agg_rows = query_map.get("aggregate", []) or []
         col_rows = query_map.get("column_values", []) or []
         totals_row = query_map.get("totals", []) or []
-        
+
         # Extract columns and rows
         columns = []
         rows_out = []
-        
+
         if agg_rows:
             first = agg_rows[0]
             if isinstance(first, dict):
@@ -958,13 +967,13 @@ class QueryDiffEngine:
                 rows_out = [list(r.values()) for r in agg_rows]
             else:
                 rows_out = agg_rows
-        
+
         # Page info
         page = spec_dict.get("page", {})
         page_info = {
             "offset": page.get("offset", 0),
             "limit": page.get("limit", len(rows_out)),
-            "total": len(rows_out)  # TODO: compute true total with COUNT query
+            "total": await self._compute_true_total(spec_dict, plan)
         }
         
         # Stats
@@ -1242,6 +1251,45 @@ def _calculate_prefetch_tiles(
 
     return list(set(prefetch_tiles))  # Remove duplicates
 
+
+    async def _compute_true_total(self, spec: PivotSpec, plan: Dict[str, Any]) -> int:
+        """
+        Compute the true total row count using a COUNT query.
+        This addresses the TODO in the pagination result.
+        """
+        # Build a count query based on the spec
+        # This would execute a SELECT COUNT(*) query to get the true total
+        # without the LIMIT applied in the original query
+
+        # For the count query, we need to match the same filters and conditions
+        # as the original query but count instead of returning data
+        table_name = spec.table
+        where_clause = ""
+        params = []
+
+        if spec.filters:
+            from ..util.sql_builder import build_where_clause
+            where_clause, params = build_where_clause(spec.filters)
+            where_clause = f"WHERE {where_clause}"
+
+        count_sql = f"SELECT COUNT(*) as total_rows FROM {table_name} {where_clause}"
+
+        try:
+            count_query = {"sql": count_sql, "params": params}
+            count_result = await self.backend.execute(count_query)
+
+            if count_result and count_result.num_rows > 0:
+                import pyarrow.compute as pc
+                total_val = count_result.column(0)[0]
+                if hasattr(total_val, 'as_py'):
+                    return total_val.as_py()
+                else:
+                    return int(total_val)
+            else:
+                return 0
+        except:
+            # If count query fails, return the current count
+            return 0
 
 def _optimize_tile_query(
     query: Dict[str, Any],

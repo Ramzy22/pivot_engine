@@ -96,8 +96,16 @@ async def example_scalable_features():
 
     # 7. CDC setup for real-time updates
     print("\n7. Setting up CDC for real-time updates...")
-    # Create a mock change stream
-    async def mock_change_stream():
+    from pivot_engine.cdc.database_change_detector import DatabaseChangeProducer
+
+    # Create a real change stream producer
+    change_producer = DatabaseChangeProducer(controller.backend)
+
+    # Register the table for CDC tracking (this creates a background task)
+    tracker_task = await change_producer.register_table_for_cdc("sales")
+
+    # For demo purposes, we'll create a limited change stream
+    async def demo_change_stream():
         from pivot_engine.cdc.cdc_manager import Change
         for i in range(3):
             yield Change(
@@ -107,7 +115,7 @@ async def example_scalable_features():
             )
             await asyncio.sleep(0.1)
 
-    cdc_manager = await controller.setup_cdc("sales", mock_change_stream())
+    cdc_manager = await controller.setup_cdc("sales", demo_change_stream())
     print("SUCCESS: CDC manager setup complete")
 
     # 8. Batch loading for multiple levels

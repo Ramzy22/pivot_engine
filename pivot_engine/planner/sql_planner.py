@@ -652,11 +652,22 @@ class SQLPlanner:
             sql += f" ORDER BY {order_sql}"
             params.extend(order_params)
         
+        # Add cursor-based pagination if cursor is provided
+        if spec.cursor and spec.sort:
+            cursor_where_clause, cursor_params = self._build_cursor_where_clause(sql, spec.cursor, spec.sort)
+            if cursor_where_clause:
+                # Insert the cursor where clause after the original where if present
+                if where_sql:
+                    sql = sql.replace(f" WHERE {where_sql}", f" WHERE ({where_sql}) AND ({cursor_where_clause})")
+                else:
+                    sql = sql.replace(f" FROM {table_ident}", f" FROM {table_ident} WHERE {cursor_where_clause}")
+                params.extend(cursor_params)
+
         # LIMIT/OFFSET (pagination)
         if hasattr(spec, 'limit') and spec.limit:
             limit = min(int(spec.limit), 1000000)
             sql += f" LIMIT {limit}"
-        
+
         return {
             "name": "aggregate",
             "sql": sql,
@@ -715,6 +726,70 @@ class SQLPlanner:
             "purpose": "totals"
         }
     
+    def _build_cursor_where_clause(self, original_sql: str, cursor: Dict[str, Any], sort_specs: Union[Dict[str, Any], List[Dict[str, Any]]]) -> Tuple[str, List[Any]]:
+        """
+        Build WHERE clause for cursor-based pagination.
+
+        Implements lexicographic cursor pagination for single or multiple sort fields.
+        For example, if sorting by [field1, field2] with cursor values [val1, val2],
+        the condition would be: field1 > val1 OR (field1 = val1 AND field2 > val2)
+        """
+        if not cursor or not sort_specs:
+            return "", []
+
+        # Normalize sort_specs to list
+        sort_list = [sort_specs] if isinstance(sort_specs, dict) else sort_specs
+
+        # Build lexicographic condition for multi-field cursor pagination
+        # For fields [A, B, C] with values [a, b, c], the condition is:
+        # A > a OR (A = a AND B > b) OR (A = a AND B = b AND C > c)
+
+        conditions = []
+        all_params = []
+
+        for i, sort_spec in enumerate(sort_list):
+            field = sort_spec.get("field")
+            order = (sort_spec.get("order") or "asc").lower()
+
+            if field and field in cursor:
+                field_ident = safe_ident(field)
+                value = cursor[field]
+
+                # For the current field in the sort list, build the condition
+                # that includes equality for all previous fields and inequality for the current
+                equality_conditions = []
+                equality_params = []
+
+                # Gather equality conditions for all previous fields
+                for j in range(i):
+                    prev_sort = sort_list[j]
+                    prev_field = prev_sort.get("field")
+                    if prev_field and prev_field in cursor:
+                        prev_field_ident = safe_ident(prev_field)
+                        prev_value = cursor[prev_field]
+                        equality_conditions.append(f"{prev_field_ident} = ?")
+                        equality_params.append(prev_value)
+
+                # Set up the inequality for the current field
+                op = ">" if order == "asc" else "<"
+
+                if equality_conditions:
+                    # If there are previous equality conditions, combine them
+                    level_condition = f"({' AND '.join(equality_conditions)} AND {field_ident} {op} ?)"
+                    all_params.extend(equality_params)
+                    all_params.append(value)
+                else:
+                    # If this is the first field, just use the inequality
+                    level_condition = f"{field_ident} {op} ?"
+                    all_params.append(value)
+
+                conditions.append(f"({level_condition})")
+
+        if conditions:
+            return " OR ".join(conditions), all_params
+
+        return "", []
+
     def _estimate_complexity(
         self, num_groups: int, num_measures: int,
         num_filters: int, has_windows: bool, has_totals: bool
@@ -725,7 +800,7 @@ class SQLPlanner:
             score += 10
         if has_totals:
             score += 5
-        
+
         if score < 10:
             return "low"
         elif score < 25:

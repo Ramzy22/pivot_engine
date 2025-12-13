@@ -278,7 +278,8 @@ class DuckDBBackend:
     
     def __del__(self):
         """Cleanup on deletion"""
-        self.close()
+        if hasattr(self, 'con') and self.con:
+            self.close()
 
 
 # ========== Helper Functions ==========

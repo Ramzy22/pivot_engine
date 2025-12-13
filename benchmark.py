@@ -67,10 +67,10 @@ def run_benchmark(planner_name: str, num_runs: int = 10):
     # Store the result for comparison
     global sql_results, ibis_results
     if planner_name == "sql":
-        sql_results = controller.run_pivot(spec, force_refresh=True)
+        sql_results = controller.run_pivot(spec, return_format="dict", force_refresh=True)
     else:
-        ibis_results = controller.run_pivot(spec, force_refresh=True)
-    
+        ibis_results = controller.run_pivot(spec, return_format="dict", force_refresh=True)
+
     controller.clear_cache()
 
 

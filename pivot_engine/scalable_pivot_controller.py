@@ -44,7 +44,7 @@ class ScalablePivotController:
         backend_uri: str = ":memory:",
         cache: Union[str, Any] = "memory",
         planner: Optional[Any] = None,
-        planner_name: str = "sql",
+        planner_name: str = "ibis",
         enable_tiles: bool = True,
         enable_delta: bool = True,
         enable_streaming: bool = True,
@@ -149,14 +149,12 @@ class ScalablePivotController:
         self.progressive_loader = ProgressiveDataLoader(self.backend, self.cache)
 
 
-        # Create a mock pattern analyzer for demonstration
-        class MockPatternAnalyzer:
-            async def analyze_session(self, user_session, spec):
-                return {'frequently_expanded': [], 'common_drill_paths': []}
+        # Initialize real pattern analyzer for intelligent prefetching
+        from pivot_engine.materialized_hierarchy_manager import UserPatternAnalyzer
 
         self.intelligent_prefetch_manager = IntelligentPrefetchManager(
             session_tracker=None,  # Would be injected
-            pattern_analyzer=MockPatternAnalyzer(),  # Provide a mock for now
+            pattern_analyzer=UserPatternAnalyzer(cache=self.cache),  # Real pattern analyzer
             backend=self.backend,
             cache=self.cache
         )
@@ -174,12 +172,16 @@ class ScalablePivotController:
 
     async def setup_cdc(self, table_name: str, change_stream):
         """Setup CDC for real-time tracking of data changes"""
-        self.cdc_manager = PivotCDCManager(self.backend.con, change_stream)
+        self.cdc_manager = PivotCDCManager(self.backend, change_stream)
+
         await self.cdc_manager.setup_cdc(table_name)
-        
+
+        # Register materialized view manager to receive change notifications
+        self.cdc_manager.register_materialized_view_manager(table_name, self.incremental_view_manager)
+
         # Start tracking changes in the background
         asyncio.create_task(self.cdc_manager.track_changes(table_name))
-        
+
         return self.cdc_manager
 
     async def run_streaming_aggregation(self, spec: PivotSpec):
@@ -499,3 +501,30 @@ class ScalablePivotController:
         )
 
         return {"data": pruned_data, "pruning_applied": True}
+
+    def run_pivot_arrow(
+        self,
+        spec: Any,
+    ) -> pa.Table:
+        """
+        Execute a pivot query and return the result as a PyArrow Table.
+        This method is used by the Flight server for Arrow-native operations.
+        """
+        # Execute the pivot query and return the raw Arrow table
+        result = self.run_pivot(spec, return_format="arrow")
+        if isinstance(result, pa.Table):
+            return result
+        else:
+            # If for some reason it's not an Arrow table, convert it
+            # This would typically be the case if some error handling returns different format
+            raise ValueError(f"Expected PyArrow Table but got {type(result)}")
+
+    def clear_cache(self):
+        """Clear all cached queries to force fresh data retrieval"""
+        if hasattr(self, 'cache') and self.cache:
+            self.cache.clear()
+
+    def close(self):
+        """Close any resources held by the controller"""
+        if hasattr(self, 'backend') and hasattr(self.backend, 'close'):
+            self.backend.close()
