@@ -2,11 +2,13 @@
 test_complete_implementation.py - Test the complete implementation focusing on TanStack adapter
 """
 import asyncio
+import pytest
 from pivot_engine.scalable_pivot_controller import ScalablePivotController
 from pivot_engine.tanstack_adapter import TanStackPivotAdapter, TanStackRequest, TanStackOperation
 from pivot_engine.types.pivot_spec import PivotSpec, Measure
 
 
+@pytest.mark.asyncio
 async def test_tanstack_adapter():
     """Test the TanStack adapter functionality"""
     print("Testing TanStack adapter...")
@@ -96,7 +98,7 @@ def test_controller_directly():
     # Test hierarchical pivot
     hier_result = controller.run_hierarchical_pivot(spec.to_dict())
     print(f"[SUCCESS] Hierarchical pivot operation successful")
-    print(f"[SUCCESS] Has expansion state: {'expansion_state' in hier_result}")
+    print(f"[SUCCESS] Has expansion state: {{'expansion_state' in hier_result}}")
 
     return True
 

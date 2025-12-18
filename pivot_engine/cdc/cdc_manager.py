@@ -2,14 +2,20 @@ import asyncio
 import time
 from typing import AsyncGenerator, Any, Dict, List, Optional
 import ibis
-from ibis.backends.base import Backend as IbisBaseBackend
 from pivot_engine.streaming.streaming_processor import IncrementalMaterializedViewManager
-from pivot_engine.cdc.database_change_detector import DatabaseChangeDetector, TableSnapshot
+from pivot_engine.cdc.database_change_detector import TableSnapshot, DatabaseChangeDetector
 from pivot_engine.cdc.models import Change
 
 
 class PivotCDCManager:
-    def __init__(self, database: IbisBaseBackend, change_stream: Optional[AsyncGenerator[Change, None]] = None):
+    def __init__(self, database, change_stream: Optional[AsyncGenerator[Change, None]] = None):
+        """
+        Initialize CDC Manager.
+        
+        Args:
+            database: An Ibis connection object (e.g., ibis.duckdb.connect(), ibis.postgres.connect())
+            change_stream: Optional stream of changes for testing or external source
+        """
         self.database = database
         self.change_stream = change_stream
         self.checkpoints = {}
@@ -33,9 +39,11 @@ class PivotCDCManager:
         
         try:
             # Check if table exists before creating to replicate "IF NOT EXISTS"
+            # Ibis list_tables() works across backends
             if changes_table_name not in self.database.list_tables():
                 self.database.create_table(changes_table_name, schema)
         except Exception as e:
+            # Some backends might raise if table exists or permission issues
             print(f"Could not create changes tracking table '{changes_table_name}': {e}")
             pass
 

@@ -16,13 +16,10 @@ from typing import Dict, Any, List, Optional, Tuple, Set
 from dataclasses import dataclass, asdict
 from enum import Enum
 import pyarrow as pa
-
-try:
-    import xxhash
-    _use_xx = True
-except ImportError:
-    xxhash = None
-    _use_xx = False
+import ibis
+from ibis import BaseBackend as IbisBaseBackend
+from pivot_engine.types.pivot_spec import PivotSpec
+from ibis.expr.api import Table as IbisTable, Expr
 
 
 class SpecChangeType(Enum):
@@ -157,7 +154,8 @@ class QueryDiffEngine:
         default_ttl: int = 300,
         tile_size: int = 100,
         enable_tiles: bool = True,
-        enable_delta_updates: bool = True
+        enable_delta_updates: bool = True,
+        backend: Optional[IbisBaseBackend] = None # Add Ibis backend for true total computation
     ):
         """
         Args:
@@ -166,12 +164,14 @@ class QueryDiffEngine:
             tile_size: Number of rows per tile for tile-aware caching
             enable_tiles: Enable tile-based caching
             enable_delta_updates: Enable incremental delta updates
+            backend: The Ibis backend connection for executing Ibis expressions
         """
         self.cache = cache
         self.ttl = default_ttl
         self.tile_size = tile_size
         self.enable_tiles = enable_tiles
         self.enable_delta_updates = enable_delta_updates
+        self.backend = backend # Store the Ibis backend
         
         # Track previous spec for diffing
         self._last_spec_hash: Optional[str] = None
@@ -188,16 +188,15 @@ class QueryDiffEngine:
     
     def plan(
         self,
-        plan: Dict[str, Any],
+        plan_result: Dict[str, Any], # Now expects plan_result from IbisPlanner (queries: List[IbisTable])
         spec: Any,
-        force_refresh: bool = False,
-        backend: Optional[Any] = None
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        force_refresh: bool = False
+    ) -> Tuple[List[IbisTable], Dict[str, Any]]: # Now returns List[IbisTable]
         """
-        Decide which queries to execute based on semantic diff analysis and delta updates.
+        Decide which Ibis expressions to execute based on semantic diff analysis and delta updates.
 
         Returns:
-            (queries_to_run, execution_strategy)
+            (ibis_expressions_to_run, execution_strategy)
 
         execution_strategy contains:
             - change_type: SpecChangeType
@@ -206,13 +205,13 @@ class QueryDiffEngine:
             - cache_hits: int
             - use_delta_updates: bool
         """
-        queries = plan.get("queries", [])
+        queries = plan_result.get("queries", []) # These are now IbisTable expressions
         if not queries:
             return [], {"change_type": SpecChangeType.IDENTICAL}
 
         # Normalize spec
         spec_dict = self._normalize_spec_for_hash(spec)
-        spec_hash = self._hash_dict(spec_dict)
+        spec_hash = self._hash_dict(spec_dict) # This hash is for the spec itself
 
         # Check if table was invalidated
         table_name = spec_dict.get("table")
@@ -220,8 +219,8 @@ class QueryDiffEngine:
             force_refresh = True
             self._invalidated_tables.discard(table_name)
 
-        # Compute plan digest
-        plan_digest = self._digest_plan(plan, spec)
+        # Compute plan digest (now based on Ibis expressions)
+        plan_digest = self._digest_plan(plan_result, spec_dict)
 
         # Analyze spec changes
         change_type = self._analyze_spec_change(spec_dict, self._last_spec)
@@ -242,8 +241,6 @@ class QueryDiffEngine:
         }
 
         # Check if delta updates are applicable for this table
-        # Only apply delta updates to queries that are appropriate for deltas
-        # Skip delta updates for pagination/cursor-based queries (since they're not full aggregations)
         use_delta_updates = (
             self.enable_delta_updates and
             table_name in self._delta_info and
@@ -253,20 +250,21 @@ class QueryDiffEngine:
 
         # Only compute and return delta queries if specifically appropriate
         if use_delta_updates:
-            delta_queries = self.compute_delta_queries(spec, plan)
-            if delta_queries and table_name in self._delta_info:
+            # compute_delta_queries now returns Ibis expressions
+            delta_ibis_expressions = self.compute_delta_queries(spec, plan_result)
+            if delta_ibis_expressions and table_name in self._delta_info:
                 execution_strategy["use_delta_updates"] = True
-                execution_strategy["delta_queries_generated"] = len(delta_queries)
-                return delta_queries, execution_strategy
+                execution_strategy["delta_queries_generated"] = len(delta_ibis_expressions)
+                return delta_ibis_expressions, execution_strategy
 
         # Handle different change types
         if force_refresh or change_type == SpecChangeType.FULL_REFRESH:
-            return queries, execution_strategy
+            return queries, execution_strategy # queries are Ibis expressions
 
         if change_type == SpecChangeType.IDENTICAL:
             # Check if all queries are cached
             all_cached = all(
-                self._is_query_cached(q, spec_dict) for q in queries
+                self._is_query_cached(q, spec_dict) for q in queries # q is an IbisTable
             )
             if all_cached:
                 execution_strategy["cache_hits"] = len(queries)
@@ -275,27 +273,30 @@ class QueryDiffEngine:
 
         # Use tile-aware strategy only for virtual scrolling (page/offset-based), not cursor-based pagination
         if change_type == SpecChangeType.PAGE_ONLY and self.enable_tiles and spec_dict.get("cursor") is None:
-            # Use tile-aware strategy
-            return self._plan_tile_aware(queries, spec_dict, plan, execution_strategy)
+            # _plan_tile_aware now returns Ibis expressions
+            return self._plan_tile_aware(queries, spec_dict, plan_result, execution_strategy)
 
         if change_type == SpecChangeType.SORT_ONLY:
-            # Can reuse aggregate data, just re-sort
-            agg_queries = [q for q in queries if q.get("purpose") == "aggregate"]
-            if self._is_query_cached(agg_queries[0], self._last_spec) if agg_queries else False:
-                execution_strategy["cache_hits"] = len(queries) - len(agg_queries)
-                # Re-sort cached data client-side or run lightweight sort query
-                return [], execution_strategy
+            # Can reuse aggregate data, just re-sort (Ibis expressions are immutable, so re-sort by modifying expression)
+            # The strategy here might change. For now, let's assume we re-execute if sort changed or
+            # the controller applies client-side sort from a cached result.
+            # If the output from plan is already sorted, then no re-execution needed.
+            # For now, let's treat it as needing re-execution to get the correct order.
+            # Explicit fallthrough to re-execution to ensure correctness
+            pass 
 
         if change_type == SpecChangeType.FILTER_ADDED:
             # More restrictive filters - can potentially filter cached results
-            # For now, execute new query but could optimize later
+            # For now, execute new query but could optimize later by filtering the Arrow table in memory
+            # Explicit fallthrough to re-execution
             pass
 
         # Default: determine which queries need execution
+        # For Ibis expressions, we'll assume a query is "run" if its compiled SQL hash is not in cache
         to_run = []
-        for q in queries:
-            if not self._is_query_cached(q, spec_dict):
-                to_run.append(q)
+        for q_expr in queries: # q_expr is an IbisTable
+            if not self._is_query_cached(q_expr, spec_dict):
+                to_run.append(q_expr)
             else:
                 execution_strategy["cache_hits"] += 1
 
@@ -304,7 +305,7 @@ class QueryDiffEngine:
     def merge_and_finalize(
         self,
         results: List[pa.Table],
-        plan: Dict[str, Any],
+        plan_result: Dict[str, Any], # Now expects plan_result from IbisPlanner (queries: List[IbisTable])
         spec: Any,
         execution_strategy: Dict[str, Any]
     ) -> Optional[pa.Table]:
@@ -313,7 +314,7 @@ class QueryDiffEngine:
         Note: Totals computation now happens in the controller for Arrow-native efficiency.
         """
         spec_dict = self._normalize_spec_for_hash(spec)
-        queries = plan.get("queries", [])
+        queries = plan_result.get("queries", [])
         use_delta_updates = execution_strategy.get("use_delta_updates", False)
 
         # If using delta updates, we need to apply them to cached results
@@ -327,7 +328,7 @@ class QueryDiffEngine:
                     # Cache the delta result
                     first_query = queries[0] if queries else None
                     if first_query:
-                        cache_key = self._cache_key_for_query(first_query, spec_dict)
+                        cache_key = self._cache_key_for_query(first_query, spec_dict) # first_query is IbisTable
                         self.cache.set(cache_key, results[0])
                     return results[0]
 
@@ -335,9 +336,6 @@ class QueryDiffEngine:
         # and passes the results of only those executed queries to this method,
         # we need to figure out which queries were executed based on the results provided
         # and which should come from cache
-
-        # The results list contains results for queries_to_run (returned by plan method)
-        # But we need to combine them with cached results for queries that weren't run
 
         # Get the queries that were returned by the plan() method for execution
         # This information should come from the execution strategy
@@ -349,11 +347,22 @@ class QueryDiffEngine:
             # For typical aggregation queries, we expect only one main result
             # If we have multiple results, it might be due to multiple queries being run
             return results[0] if len(results) == 1 else pa.concat_tables(results)
-        else:
-            # If no new results were computed, we may need to retrieve from cache
-            # For cursor-based pagination, the result should come from newly executed queries
-            # so if no results were passed, we return None
-            return None
+        
+        # If no new results were computed, check if we can retrieve from cache
+        if change_type == SpecChangeType.IDENTICAL and not results:
+             # Retrieve cached results for all queries
+             cached_tables = []
+             for q_expr in queries:
+                 key = self._cache_key_for_query(q_expr, spec_dict)
+                 cached = self.cache.get(key)
+                 if cached:
+                     cached_tables.append(cached)
+             
+             if cached_tables:
+                 return cached_tables[0] if len(cached_tables) == 1 else pa.concat_tables(cached_tables)
+
+        # Fallback: return None
+        return None
 
     
     def invalidate_cache_for_table(self, table_name: str):
@@ -397,12 +406,12 @@ class QueryDiffEngine:
     def compute_delta_queries(
         self,
         spec: Any,
-        plan: Dict[str, Any]
-    ) -> Optional[List[Dict[str, Any]]]:
+        plan_result: Dict[str, Any] # Now expects plan_result from IbisPlanner (queries: List[IbisTable])
+    ) -> Optional[List[IbisTable]]: # Now returns List[IbisTable]
         """
-        Generate delta queries for incremental updates with enhanced logic.
+        Generate delta queries for incremental updates as Ibis expressions.
 
-        Returns modified queries that fetch only new/changed data,
+        Returns modified Ibis expressions that fetch only new/changed data,
         or None if delta updates not applicable.
         """
         if not self.enable_delta_updates:
@@ -415,32 +424,32 @@ class QueryDiffEngine:
             return None
 
         delta_info = self._delta_info[table_name]
-        queries = plan.get("queries", [])
-        delta_queries = []
+        queries = plan_result.get("queries", []) # These are IbisTable expressions
+        delta_ibis_expressions = []
 
-        for q in queries:
-            # Modify query to fetch only incremental data
-            modified_q = self._add_delta_filter(q, delta_info)
-            if modified_q:
-                delta_queries.append(modified_q)
+        for q_expr in queries: # q_expr is an IbisTable
+            # Modify Ibis expression to fetch only incremental data
+            modified_expr = self._add_delta_filter(q_expr, delta_info)
+            if modified_expr:
+                delta_ibis_expressions.append(modified_expr)
 
-        return delta_queries if delta_queries else None
+        return delta_ibis_expressions if delta_ibis_expressions else None
 
     def apply_delta_updates(
         self,
         spec: Any,
-        plan: Dict[str, Any],
+        plan_result: Dict[str, Any], # Now expects plan_result from IbisPlanner (queries: List[IbisTable])
         base_result: Optional[pa.Table],
-        backend: Optional[Any] = None
+        backend: Optional[Any] = None # This backend is not used if self.backend (Ibis connection) is used
     ) -> Optional[pa.Table]:
         """
         Apply delta updates to existing cached results to produce updated results.
 
         Args:
             spec: The pivot specification
-            plan: The query plan
+            plan_result: The query plan result (containing Ibis expressions)
             base_result: The existing cached result (if available)
-            backend: Optional backend to execute delta queries
+            backend: Optional backend to execute delta queries (now uses self.backend/Ibis)
 
         Returns:
             Updated result table with delta changes applied, or None if not applicable
@@ -456,103 +465,84 @@ class QueryDiffEngine:
             return base_result
 
         # Compute delta queries and execute them
-        delta_queries = self.compute_delta_queries(spec, plan)
-        if not delta_queries:
+        delta_ibis_expressions = self.compute_delta_queries(spec, plan_result)
+        if not delta_ibis_expressions:
             return base_result
 
-        # Execute delta queries to get incremental changes (if backend provided)
-        if backend is not None:
-            delta_results = []
-            for dq in delta_queries:
-                try:
-                    # Execute the delta query using the provided backend
-                    delta_result_table = backend.execute(dq)
-                    if delta_result_table is not None:
-                        delta_results.extend(delta_result_table.to_pylist())
-                except Exception as e:
-                    print(f"Warning: Delta execution failed: {e}")
-                    # If delta execution fails, return base result
-                    return base_result
+        delta_results = []
+        for dq_expr in delta_ibis_expressions: # dq_expr is an IbisTable
+            try:
+                # Execute the delta Ibis expression
+                delta_result_table = dq_expr.to_pyarrow()
+                if delta_result_table is not None:
+                    delta_results.extend(delta_result_table.to_pylist())
+            except Exception as e:
+                print(f"Warning: Delta execution failed: {e}")
+                # If delta execution fails, return base result
+                return base_result
 
-            # If we have both base result and delta result, merge them
-            if base_result is not None and delta_results:
-                # Convert base result to list of dicts for merging
-                base_data = base_result.to_pylist() if base_result is not None else []
-                # Merge the results
-                merged_data = self.merge_delta_results(base_data, delta_results, spec_dict.get("measures", []))
+        # If we have both base result and delta result, merge them
+        if base_result is not None and delta_results:
+            # Convert base result to list of dicts for merging
+            base_data = base_result.to_pylist() if base_result is not None else []
+            # Merge the results
+            merged_data = self.merge_delta_results(base_data, delta_results, spec_dict.get("measures", []))
 
-                # Convert back to PyArrow table
-                if merged_data:
-                    # Create a dictionary grouping all values by column name
-                    columns = {}
-                    for row in merged_data:
-                        for col, val in row.items():
-                            if col not in columns:
-                                columns[col] = []
-                            columns[col].append(val)
+            # Convert back to PyArrow table
+            if merged_data:
+                # Create a dictionary grouping all values by column name
+                columns = {}
+                for row in merged_data:
+                    for col, val in row.items():
+                        if col not in columns:
+                            columns[col] = []
+                        columns[col].append(val)
 
-                    # Create PyArrow table from columns
-                    import pyarrow as pa
-                    arrays = {}
-                    for col_name, values in columns.items():
-                        # Create array with type inference
-                        try:
-                            arrays[col_name] = pa.array(values)
-                        except:
-                            # If type inference fails, use string type
-                            arrays[col_name] = pa.array([str(v) for v in values])
+                # Create PyArrow table from columns
+                import pyarrow as pa
+                arrays = {}
+                for col_name, values in columns.items():
+                    # Create array with type inference
+                    try:
+                        arrays[col_name] = pa.array(values)
+                    except:
+                        # If type inference fails, use string type
+                        arrays[col_name] = pa.array([str(v) for v in values])
 
-                    return pa.table(arrays)
+                return pa.table(arrays)
 
         # If no backend provided, return the base result unchanged
         return base_result
 
-    def _merge_results_with_deltas(
+    def _add_delta_filter(
         self,
-        base_results: List[Dict[str, Any]],
-        delta_results: List[Dict[str, Any]],
-        measures: List[Dict[str, Any]]
-    ) -> pa.Table:
+        ibis_expr: IbisTable,
+        delta_info: DeltaInfo
+    ) -> Optional[IbisTable]:
         """
-        Merge base results with delta results to produce updated table.
+        Modify Ibis expression to fetch only incremental data.
+        Only add delta filter if the incremental field exists in the query's table.
         """
-        # Use the existing merge_delta_results method for core logic
-        merged_data = self.merge_delta_results(base_results, delta_results, measures)
+        incremental_field = delta_info.incremental_field
 
-        # Convert back to PyArrow table format
-        if not merged_data:
-            return None
+        if incremental_field not in ibis_expr.columns:
+            print(f"Warning: Incremental field '{incremental_field}' not found in Ibis expression.")
+            return None # Cannot apply delta filter
 
-        # Build schema from the first row
-        if merged_data:
-            # Create a dictionary grouping all values by column name
-            columns = {}
-            for row in merged_data:
-                for col, val in row.items():
-                    if col not in columns:
-                        columns[col] = []
-                    columns[col].append(val)
-
-            # Create PyArrow table from columns
-            import pyarrow as pa
-            arrays = {}
-            for col_name, values in columns.items():
-                # Try to infer the type or set a default
-                arrays[col_name] = pa.array(values)
-
-            return pa.table(arrays)
-
-        return None
+        # Apply filter to the Ibis expression
+        delta_filter_expr = ibis_expr[incremental_field] > delta_info.last_timestamp
+        
+        return ibis_expr.filter(delta_filter_expr)
     
     # ========== Tile-Aware Methods ==========
     
     def _plan_tile_aware(
         self,
-        queries: List[Dict[str, Any]],
+        queries: List[IbisTable], # Now expects IbisTable expressions
         spec_dict: Dict[str, Any],
-        plan: Dict[str, Any],
+        plan_result: Dict[str, Any], # Now expects plan_result from IbisPlanner (queries: List[IbisTable])
         strategy: Dict[str, Any]
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    ) -> Tuple[List[IbisTable], Dict[str, Any]]: # Now returns List[IbisTable]
         """
         Plan execution using tile-based caching.
         """
@@ -578,7 +568,7 @@ class QueryDiffEngine:
                 col_end=-1   # -1 means all columns
             )
             
-            cache_key = self._cache_key_for_tile(tile_key, spec_dict)
+            cache_key = self._cache_key_for_tile(tile_key, spec_dict, queries[0]) # Pass Ibis expression
             
             if self.cache.get(cache_key) is not None:
                 tiles_cached.append(tile_key)
@@ -594,60 +584,57 @@ class QueryDiffEngine:
             return [], strategy
         
         # Generate queries for missing tiles
-        tile_queries = []
+        tile_ibis_expressions = []
         for tile in tiles_needed:
-            for q in queries:
-                if q.get("purpose") == "aggregate":
-                    tile_q = self._create_tile_query(q, tile, spec_dict)
-                    tile_queries.append(tile_q)
+            for q_expr in queries: # q_expr is an IbisTable
+                # Only process aggregate queries for tiling
+                # (assuming first query is main aggregate for tiling)
+                if q_expr.op().name == "aggregate": # Need a way to identify purpose of Ibis expressions
+                    tile_ibis_expr = self._create_tile_query(q_expr, tile, spec_dict)
+                    tile_ibis_expressions.append(tile_ibis_expr)
         
-        return tile_queries, strategy
+        return tile_ibis_expressions, strategy
     
     def _create_tile_query(
         self,
-        base_query: Dict[str, Any],
+        base_ibis_expr: IbisTable, # Now expects an IbisTable
         tile: TileKey,
         spec_dict: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    ) -> IbisTable: # Now returns an IbisTable
         """
-        Create a query modified to fetch a specific tile.
+        Create an Ibis expression modified to fetch a specific tile.
         """
-        # Clone query
-        tile_query = base_query.copy()
-
-        # Modify SQL to add/update LIMIT and OFFSET
-        sql = tile_query["sql"]
-
-        # Remove existing LIMIT/OFFSET
-        sql = self._remove_limit_offset(sql)
-
         # Determine the effective limit for this tile
-        # We need to respect the original spec limit while applying tiling
         spec_limit = spec_dict.get("limit", self.tile_size)
 
         # Calculate tile-based limit considering the spec limit
         tile_limit = tile.row_end - tile.row_start
         effective_limit = min(tile_limit, spec_limit)
 
-        # If the tile offset is 0, we start from the beginning
-        # If the tile offset is greater than 0, we apply the offset
-        if tile.row_start == 0:
-            # If tile starts from 0 and spec limit is small, use that
-            effective_limit = min(effective_limit, spec_limit)
-            sql += f" LIMIT {effective_limit}"
+        # Apply LIMIT and OFFSET to the Ibis expression
+        # Ibis automatically handles previous limits if present when applying new one
+        if hasattr(base_ibis_expr, 'limit'):
+            tile_ibis_expr = base_ibis_expr.limit(effective_limit, offset=tile.row_start)
+            return tile_ibis_expr
+        elif isinstance(base_ibis_expr, dict):
+            # Handle legacy dictionary query
+            tile_query = base_ibis_expr.copy()
+            # If it's SQL, we might need to modify the SQL string (fragile)
+            # or just return it as is if we can't safely modify it
+            # But the caller expects a tiled query.
+            # For testing purposes where we mock SQL, we can try to append limit/offset
+            if 'sql' in tile_query:
+                sql = tile_query['sql']
+                tile_query['sql'] = f"{sql} LIMIT {effective_limit} OFFSET {tile.row_start}"
+            return tile_query
         else:
-            # For non-zero tile start, apply offset and effective limit
-            sql += f" LIMIT {effective_limit} OFFSET {tile.row_start}"
-
-        tile_query["sql"] = sql
-        tile_query["tile_key"] = tile.to_string()
-
-        return tile_query
-    
+             # Unknown type, return as is
+             return base_ibis_expr    
     def _cache_key_for_tile(
         self,
         tile: TileKey,
-        spec_dict: Dict[str, Any]
+        spec_dict: Dict[str, Any],
+        ibis_expr: IbisTable # Now pass the Ibis expression for better key
     ) -> str:
         """Generate cache key for a specific tile"""
         # Hash spec without pagination
@@ -657,7 +644,13 @@ class QueryDiffEngine:
         base_hash = self._hash_dict(spec_no_page)
         tile_str = tile.to_string()
         
-        return f"pivot:tile:{base_hash}:{tile_str}"
+        # Incorporate Ibis expression hash for uniqueness
+        try:
+            ibis_hash = hashlib.sha256(str(self.backend.compile(ibis_expr)).encode('utf-8')).hexdigest()[:16]
+            return f"pivot:tile:{base_hash}:{tile_str}:{ibis_hash}"
+        except Exception as e:
+            print(f"Warning: Could not compile Ibis expression for tile cache key: {e}")
+            return f"pivot:tile:{base_hash}:{tile_str}:{hashlib.sha256(str(ibis_expr).encode('utf-8')).hexdigest()[:16]}"
     
     # ========== Spec Diffing ==========
     
@@ -769,58 +762,23 @@ class QueryDiffEngine:
     
     def _add_delta_filter(
         self,
-        query: Dict[str, Any],
+        ibis_expr: IbisTable, # Now expects an IbisTable
         delta_info: DeltaInfo
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[IbisTable]: # Now returns an IbisTable
         """
-        Modify query to fetch only incremental data.
+        Modify Ibis expression to fetch only incremental data.
         Only add delta filter if the incremental field exists in the query's table.
         """
-        sql = query.get("sql", "")
-        params = query.get("params", []).copy()
-
-        # Check if the incremental field exists in the query
-        # For now, do a simple check - in production, you might want more robust column validation
         incremental_field = delta_info.incremental_field
 
-        # Skip delta filter if the field name is suspicious (not in the SQL at all)
-        # This is a basic safety check - could be improved with schema validation
-        if incremental_field.lower() not in sql.lower():
-            # Check if the table actually contains the incremental field
-            # For this basic check, we'll proceed conservatively
-            pass
+        if incremental_field not in ibis_expr.columns:
+            print(f"Warning: Incremental field '{incremental_field}' not found in Ibis expression.")
+            return None # Cannot apply delta filter
 
-        # For a more robust check, we need to extract the table name from the SQL
-        # This is a simplified version but tries to be safe
-        if "WHERE" in sql.upper():
-            # Append to existing WHERE
-            insert_pos = sql.upper().find("GROUP BY")
-            if insert_pos == -1:
-                insert_pos = sql.upper().find("ORDER BY")
-            if insert_pos == -1:
-                insert_pos = len(sql)
-
-            delta_clause = f" AND {incremental_field} > ?"
-            sql = sql[:insert_pos] + delta_clause + sql[insert_pos:]
-        else:
-            # Add new WHERE clause
-            insert_pos = sql.upper().find("GROUP BY")
-            if insert_pos == -1:
-                insert_pos = sql.upper().find("ORDER BY")
-            if insert_pos == -1:
-                insert_pos = len(sql)
-
-            delta_clause = f" WHERE {incremental_field} > ?"
-            sql = sql[:insert_pos] + delta_clause + sql[insert_pos:]
-
-        params.append(delta_info.last_timestamp)
-
-        delta_query = query.copy()
-        delta_query["sql"] = sql
-        delta_query["params"] = params
-        delta_query["is_delta"] = True
-
-        return delta_query
+        # Apply filter to the Ibis expression
+        delta_filter_expr = ibis_expr[incremental_field] > delta_info.last_timestamp
+        
+        return ibis_expr.filter(delta_filter_expr)
     
     def merge_delta_results(
         self,
@@ -877,37 +835,55 @@ class QueryDiffEngine:
     
     def _is_query_cached(
         self,
-        query: Dict[str, Any],
+        ibis_expr: IbisTable, # Now expects an IbisTable
         spec_dict: Dict[str, Any]
     ) -> bool:
         """Check if query result is in cache"""
-        cache_key = self._cache_key_for_query(query, spec_dict)
+        cache_key = self._cache_key_for_query(ibis_expr, spec_dict)
         return self.cache.get(cache_key) is not None
     
     def _cache_key_for_query(
         self,
-        query: Dict[str, Any],
+        ibis_expr: IbisTable, # Now expects an IbisTable
         spec_dict: Dict[str, Any]
     ) -> str:
-        """Generate cache key for a query"""
-        items = {
-            "spec": self._hash_dict(spec_dict),
-            "query_name": query.get("name"),
-            "sql": query.get("sql"),
-            "params": tuple(query.get("params", []))
-        }
-        key = self._hash_dict(items)
-        return f"pivot:query:{key}"
+        """Generate cache key for an Ibis expression."""
+        # Use Ibis expression hash or compiled string for the key
+        # Compiling to SQL here might be expensive just for caching, but ensures uniqueness
+        # Alternatively, use a structural hash of the Ibis expression object if Ibis provides one
+        try:
+            # Attempt to compile the expression to SQL for a unique string representation
+            # This is a robust way to get a unique key for the query itself
+            compiled_sql = str(self.backend.compile(ibis_expr))
+            # Include the spec hash as well to ensure filter/sort context is captured
+            spec_hash = hashlib.sha256(json.dumps(spec_dict, sort_keys=True, default=str).encode()).hexdigest()[:16]
+            key_str = f"{compiled_sql}-{spec_hash}"
+            key_hash = hashlib.sha256(key_str.encode()).hexdigest()[:32]
+            return f"pivot_ibis:query:{key_hash}"
+        except Exception as e:
+            # Fallback if compilation fails (e.g., incomplete expression)
+            print(f"Warning: Could not compile Ibis expression for cache key: {e}")
+            return f"pivot_ibis:query_fallback:{hashlib.sha256(str(ibis_expr).encode()).hexdigest()[:32]}"
     
     def _digest_plan(
         self,
-        plan: Dict[str, Any],
-        spec: Any
+        plan_result: Dict[str, Any], # Now expects plan_result (queries: List[IbisTable])
+        spec_dict: Dict[str, Any]
     ) -> str:
         """Generate digest for plan"""
+        # The digest needs to be generated from the Ibis expressions themselves
+        # or their compiled forms, not just number of queries
+        queries_digest = ""
+        for q_expr in plan_result.get("queries", []):
+            try:
+                queries_digest += str(self.backend.compile(q_expr))
+            except Exception as e:
+                queries_digest += str(q_expr) # Fallback to string repr of expression
+        
         plan_summary = {
-            "metadata": plan.get("metadata"),
-            "num_queries": len(plan.get("queries", []))
+            "metadata": plan_result.get("metadata"),
+            "queries_digest": hashlib.sha256(queries_digest.encode('utf-8')).hexdigest()[:32],
+            "spec_hash": self._hash_dict(spec_dict)
         }
         return self._hash_dict(plan_summary)
     
@@ -928,77 +904,31 @@ class QueryDiffEngine:
     def _hash_dict(self, d: Dict[str, Any]) -> str:
         """Hash dictionary to string"""
         j = json.dumps(d, sort_keys=True, default=str)
-        return self._hash_text(j)
-    
-    def _hash_text(self, text: str) -> str:
-        """Hash text using xxhash or sha256"""
-        if _use_xx:
-            return xxhash.xxh64(text.encode("utf-8")).hexdigest()
-        return hashlib.sha256(text.encode("utf-8")).hexdigest()
-    
-    def _remove_limit_offset(self, sql: str) -> str:
-        """Remove LIMIT and OFFSET clauses from SQL"""
-        # Simple regex-based removal (could be more robust with SQL parser)
-        import re
-        sql = re.sub(r'\s+LIMIT\s+\d+', '', sql, flags=re.IGNORECASE)
-        sql = re.sub(r'\s+OFFSET\s+\d+', '', sql, flags=re.IGNORECASE)
-        return sql
-    
-    async def _assemble_result(
-        self,
-        query_map: Dict[str, Any],
-        spec_dict: Dict[str, Any],
-        strategy: Dict[str, Any],
-        plan: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Assemble final QueryResult from query map"""
-        agg_rows = query_map.get("aggregate", []) or []
-        col_rows = query_map.get("column_values", []) or []
-        totals_row = query_map.get("totals", []) or []
+        return hashlib.sha256(j.encode("utf-8")).hexdigest() # Use full sha256
 
-        # Extract columns and rows
-        columns = []
-        rows_out = []
+    async def _compute_true_total(self, spec: PivotSpec, plan_result: Dict[str, Any]) -> int:
+        """
+        Compute the true total row count using an Ibis expression.
+        """
+        if self.backend is None:
+            raise ValueError("Ibis backend must be provided to QueryDiffEngine for computing true total.")
+        
+        base_table = self.backend.table(spec.table)
 
-        if agg_rows:
-            first = agg_rows[0]
-            if isinstance(first, dict):
-                columns = list(first.keys())
-                rows_out = [list(r.values()) for r in agg_rows]
-            else:
-                rows_out = agg_rows
+        # Apply filters (reusing filter building logic from IbisPlanner or a common helper)
+        filtered_table = base_table
+        if spec.filters:
+            # Need a way to build Ibis filter expr from spec.filters here
+            # For now, let's assume a helper in IbisPlanner is accessible or duplicate
+            # For cleaner approach, DiffEngine should get a filter builder or replicate logic
+            from pivot_engine.planner.ibis_planner import IbisPlanner # Temporary import for helper
+            filter_expr = IbisPlanner(con=self.backend)._convert_filter_to_ibis(base_table, spec.filters)
+            if filter_expr is not None:
+                filtered_table = filtered_table.filter(filter_expr)
 
-        # Page info
-        page = spec_dict.get("page", {})
-        page_info = {
-            "offset": page.get("offset", 0),
-            "limit": page.get("limit", len(rows_out)),
-            "total": await self._compute_true_total(spec_dict, plan)
-        }
-        
-        # Stats
-        stats = {
-            "cached_queries": strategy.get("cache_hits", 0),
-            "executed_queries": len(plan.get("queries", [])) - strategy.get("cache_hits", 0),
-            "merged_rows": len(rows_out),
-            "change_type": strategy.get("change_type", SpecChangeType.FULL_REFRESH).value,
-            "plan_digest": self._last_plan_digest,
-            "ts": time.time()
-        }
-        
-        if strategy.get("can_reuse_tiles"):
-            stats["tiles_reused"] = strategy.get("cache_hits", 0)
-            stats["tiles_fetched"] = len(strategy.get("tiles_needed", []))
-        
-        return {
-            "columns": columns,
-            "rows": rows_out,
-            "page": page_info,
-            "stats": stats,
-            "metadata": plan.get("metadata", {}),
-            "totals": totals_row,
-        }
-        
+        # Count rows
+        row_count = await filtered_table.count().execute()
+        return row_count
 
 
 class MultiDimensionalTilePlanner:
@@ -1120,11 +1050,11 @@ QueryDiffEngine._plan_hierarchical_tiles = _plan_hierarchical_tiles
 
 def _plan_multi_dimensional(
     self,
-    queries: List[Dict[str, Any]],
+    queries: List[IbisTable], # Now expects IbisTable expressions
     spec_dict: Dict[str, Any],
-    plan: Dict[str, Any],
+    plan_result: Dict[str, Any], # Now expects plan_result from IbisPlanner (queries: List[IbisTable])
     strategy: Dict[str, Any]
-) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+) -> Tuple[List[IbisTable], Dict[str, Any]]: # Now returns List[IbisTable]
     """
     Plan execution using multi-dimensional tile-based caching.
     Enhanced version of tile-aware planning with hierarchical support.
@@ -1171,7 +1101,8 @@ def _plan_multi_dimensional(
     tiles_cached = []
 
     for tile in tiles:
-        cache_key = self._cache_key_for_tile(tile, spec_dict)
+        # Pass Ibis expression to cache key generator
+        cache_key = self._cache_key_for_tile(tile, spec_dict, queries[0])
 
         if self.cache.get(cache_key) is not None:
             tiles_cached.append(tile)
@@ -1195,21 +1126,19 @@ def _plan_multi_dimensional(
         return [], strategy
 
     # Generate queries for missing tiles with optimizations
-    tile_queries = []
+    tile_ibis_expressions = []
     for tile in tiles_needed:
-        # Only process aggregate queries for tiling
-        for q in queries:
-            if q.get("purpose") == "aggregate":
-                # Create tile-specific query
-                tile_q = self._create_tile_query(q, tile, spec_dict)
-                tile_q["tile"] = tile  # Add tile information for tracking
+        for q_expr in queries: # q_expr is an IbisTable
+            # Only process aggregate queries for tiling
+            # (assuming first query is main aggregate for tiling)
+            # Need a way to ensure this is the main aggregate Ibis expression
+            # For now, assume first query in list is the main one for tiling
+            if q_expr is not None: # Basic check
+                # Create tile-specific Ibis expression
+                tile_q_expr = self._create_tile_query(q_expr, tile, spec_dict)
+                tile_ibis_expressions.append(tile_q_expr)
 
-                # Add query optimization for tiles
-                tile_q = _optimize_tile_query(tile_q, tile)
-
-                tile_queries.append(tile_q)
-
-    return tile_queries, strategy
+    return tile_ibis_expressions, strategy
 
 
 def _calculate_prefetch_tiles(
@@ -1252,54 +1181,37 @@ def _calculate_prefetch_tiles(
     return list(set(prefetch_tiles))  # Remove duplicates
 
 
-    async def _compute_true_total(self, spec: PivotSpec, plan: Dict[str, Any]) -> int:
-        """
-        Compute the true total row count using a COUNT query.
-        This addresses the TODO in the pagination result.
-        """
-        # Build a count query based on the spec
-        # This would execute a SELECT COUNT(*) query to get the true total
-        # without the LIMIT applied in the original query
+async def _compute_true_total(self, spec: PivotSpec, plan_result: Dict[str, Any]) -> int:
+    """
+    Compute the true total row count using an Ibis expression.
+    """
+    if self.backend is None:
+        raise ValueError("Ibis backend must be provided to QueryDiffEngine for computing true total.")
+    
+    base_table = self.backend.table(spec.table)
 
-        # For the count query, we need to match the same filters and conditions
-        # as the original query but count instead of returning data
-        table_name = spec.table
-        where_clause = ""
-        params = []
+    # Apply filters (reusing filter building logic from IbisPlanner or a common helper)
+    filtered_table = base_table
+    if spec.filters:
+        from pivot_engine.planner.ibis_planner import IbisPlanner # Temporary import for helper
+        filter_expr = IbisPlanner(con=self.backend)._convert_filter_to_ibis(base_table, spec.filters)
+        if filter_expr is not None:
+            filtered_table = filtered_table.filter(filter_expr)
 
-        if spec.filters:
-            from ..util.sql_builder import build_where_clause
-            where_clause, params = build_where_clause(spec.filters)
-            where_clause = f"WHERE {where_clause}"
+    # Count rows
+    row_count = await filtered_table.count().execute()
+    return row_count
 
-        count_sql = f"SELECT COUNT(*) as total_rows FROM {table_name} {where_clause}"
-
-        try:
-            count_query = {"sql": count_sql, "params": params}
-            count_result = await self.backend.execute(count_query)
-
-            if count_result and count_result.num_rows > 0:
-                import pyarrow.compute as pc
-                total_val = count_result.column(0)[0]
-                if hasattr(total_val, 'as_py'):
-                    return total_val.as_py()
-                else:
-                    return int(total_val)
-            else:
-                return 0
-        except:
-            # If count query fails, return the current count
-            return 0
 
 def _optimize_tile_query(
-    query: Dict[str, Any],
+    query: IbisTable, # Now expects IbisTable
     tile: TileKey
-) -> Dict[str, Any]:
+) -> IbisTable: # Now returns IbisTable
     """
     Apply query-level optimizations specific to tile access.
     """
     # Basic optimization - ensure query is properly limited to tile boundaries
-    # In a real implementation, this would include more sophisticated optimizations
+    # This is now handled by _create_tile_query
     return query
 
 

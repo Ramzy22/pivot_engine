@@ -82,6 +82,17 @@ class IbisBackend:
                     account=parsed.hostname,
                     **connection_kwargs
                 )
+            elif connection_uri.startswith("clickhouse://"):
+                from urllib.parse import urlparse
+                parsed = urlparse(connection_uri)
+                self.con = ibis.clickhouse.connect(
+                    host=parsed.hostname,
+                    port=parsed.port or 8123,
+                    user=parsed.username,
+                    password=parsed.password,
+                    database=parsed.path[1:] if parsed.path else 'default',
+                    **connection_kwargs
+                )
             elif connection_uri.startswith("sqlite://"):
                 db_path = connection_uri.replace("sqlite://", "")
                 self.con = ibis.sqlite.connect(db_path)
@@ -112,7 +123,11 @@ class IbisBackend:
             # For Ibis, execute the expression directly
             if isinstance(query, dict) and 'ibis_expr' in query:
                 ibis_expr = query['ibis_expr']
-                result = ibis_expr.execute()
+                # Prefer to_pyarrow() for zero-copy efficiency
+                if hasattr(ibis_expr, 'to_pyarrow'):
+                    result = ibis_expr.to_pyarrow()
+                else:
+                    result = ibis_expr.execute()
             else:
                 # If plain SQL is provided, convert to Ibis expression
                 sql = query.get("sql", "")
@@ -124,11 +139,21 @@ class IbisBackend:
 
             # Convert to Arrow table if not already
             if not isinstance(result, pa.Table):
-                # Convert pandas DataFrame to Arrow table if necessary
+                # Convert pandas DataFrame or other results to Arrow table
                 if hasattr(result, 'to_arrow_table'):
                     result = result.to_arrow_table()
+                elif hasattr(result, 'to_arrow'):
+                    result = result.to_arrow()
                 elif pa is not None:
-                    result = pa.Table.from_pandas(result)
+                    import pandas as pd
+                    if isinstance(result, pd.DataFrame):
+                        result = pa.Table.from_pandas(result)
+                    else:
+                        # Fallback for other types
+                        try:
+                            result = pa.Table.from_pandas(pd.DataFrame(result))
+                        except:
+                            pass
             
             # Performance tracking
             self._query_count += 1

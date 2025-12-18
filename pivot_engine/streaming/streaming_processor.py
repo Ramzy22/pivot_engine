@@ -8,7 +8,6 @@ from typing import Dict, Any, Optional, Callable, List
 import pyarrow as pa
 import ibis
 from pivot_engine.types.pivot_spec import PivotSpec
-from pivot_engine.backends.duckdb_backend import DuckDBBackend
 from ibis.expr.api import Table as IbisTable
 
 

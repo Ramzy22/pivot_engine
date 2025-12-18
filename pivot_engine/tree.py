@@ -650,7 +650,7 @@ class TreeExpansionManager:
             level_spec = self._create_level_spec_batch(base_spec, parent_path, current_dimension)
             result_dict = self.controller.run_pivot(level_spec, return_format="dict")
 
-            path_key = self.tree_cache.state.path_to_key(list(parent_path))
+            path_key = ExpansionState().path_to_key(list(parent_path))
             results[path_key] = self._results_to_dict(result_dict["rows"], result_dict["columns"])
 
         return results

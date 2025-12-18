@@ -41,6 +41,19 @@ class PivotFlightServer(fl.FlightServerBase):
             # Send the result back to the client as a single-item stream.
             # The body is a buffer containing the table's schema.
             yield fl.Result(pa.py_buffer(table.schema.serialize()))
+        
+        elif action.type == "clear_cache":
+            # Clear the controller's cache
+            if hasattr(self._controller, 'clear_cache'):
+                self._controller.clear_cache()
+                yield fl.Result(pa.py_buffer(b'{"status": "success", "message": "Cache cleared"}'))
+            else:
+                 yield fl.Result(pa.py_buffer(b'{"status": "error", "message": "Cache clearing not supported by controller"}'))
+        
+        elif action.type == "status":
+            # Return server status
+            yield fl.Result(pa.py_buffer(json.dumps({"status": "running", "location": self._location}).encode("utf-8")))
+            
         else:
             raise NotImplementedError(f"Action {action.type} not implemented.")
 
@@ -62,6 +75,8 @@ class PivotFlightServer(fl.FlightServerBase):
         """List available actions."""
         return [
             ("pivot", "Run a pivot query."),
+            ("clear_cache", "Clear the query cache."),
+            ("status", "Get server status."),
         ]
 
     def serve(self):

@@ -8,8 +8,6 @@ import asyncio
 import time
 from typing import Dict, Any, AsyncGenerator, Optional, List
 from dataclasses import dataclass
-import ibis
-from ibis.backends.base import Backend as IbisBaseBackend
 from pivot_engine.cdc.models import Change
 
 
@@ -26,8 +24,8 @@ class TableSnapshot:
 class DatabaseChangeDetector:
     """Detects changes in database tables and generates change events"""
     
-    def __init__(self, backend: IbisBaseBackend):
-        self.backend = backend
+    def __init__(self, backend):
+        self.backend = backend  # This is an Ibis connection object
         self.table_snapshots: Dict[str, TableSnapshot] = {}
         self.change_queues: Dict[str, asyncio.Queue] = {}
         self.running = False
@@ -59,7 +57,8 @@ class DatabaseChangeDetector:
         row_count = ibis_table.count().execute()
         
         # Get a simple checksum using row count for backend agnosticism.
-        # SUM(HASH(*)) is DuckDB specific and not easily portable via Ibis.
+        # Note: Robust content hashing (e.g., MD5 of all rows) is backend-specific and expensive.
+        # Row count + Sample data is a lightweight proxy for detecting changes.
         checksum = str(row_count)
         
         # Get sample data
@@ -183,9 +182,9 @@ class DatabaseChangeDetector:
 
 class DatabaseChangeProducer:
     """Produces change streams for multiple tables"""
-    
-    def __init__(self, backend: IbisBaseBackend):
-        self.backend = backend
+
+    def __init__(self, backend):
+        self.backend = backend  # This should be a DuckDBBackend instance
         self.detector = DatabaseChangeDetector(backend)
         self.table_trackers = {}
         

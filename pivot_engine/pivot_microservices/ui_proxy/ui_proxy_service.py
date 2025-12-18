@@ -19,7 +19,7 @@ class UIPivotProxy:
         self.config = config or {}
         self.active_connections: Dict[str, List[WebSocket]] = {}
         self.subscription_manager = SubscriptionManager()
-        self.throttle_time = config.get('throttle_time', 0.1)  # 100ms between updates
+        self.throttle_time = self.config.get('throttle_time', 0.1)  # 100ms between updates
         
     async def handle_pivot_request(self, spec_dict: Dict[str, Any]) -> Dict[str, Any]:
         """Handle pivot request from UI"""
@@ -250,6 +250,10 @@ class UIPivotService:
                         
             except WebSocketDisconnect:
                 pass  # Connection closed
+    
+    def get_app(self):
+        """Return the FastAPI application"""
+        return self.app
 
 
 # Example usage function

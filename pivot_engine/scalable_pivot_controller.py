@@ -6,10 +6,14 @@ import time
 import decimal
 import pyarrow as pa
 import asyncio
+import ibis
+from ibis.expr.api import Table as IbisTable
+
 from .tree import TreeExpansionManager
 from .planner.sql_planner import SQLPlanner
 from .planner.ibis_planner import IbisPlanner
 from .diff.diff_engine import QueryDiffEngine
+from .backends.ibis_backend import IbisBackend
 from .backends.duckdb_backend import DuckDBBackend
 from .cache.memory_cache import MemoryCache
 from .cache.redis_cache import RedisCache
@@ -18,7 +22,8 @@ from pivot_engine.streaming.streaming_processor import StreamAggregationProcesso
 from pivot_engine.hierarchical_scroll_manager import HierarchicalVirtualScrollManager
 from pivot_engine.progressive_loader import ProgressiveDataLoader
 from pivot_engine.cdc.cdc_manager import PivotCDCManager
-from pivot_engine.materialized_hierarchy_manager import MaterializedHierarchyManager, IntelligentPrefetchManager
+from pivot_engine.materialized_hierarchy_manager import MaterializedHierarchyManager
+from pivot_engine.intelligent_prefetch_manager import IntelligentPrefetchManager, UserPatternAnalyzer
 from pivot_engine.pruning_manager import HierarchyPruningManager, ProgressiveHierarchicalLoader
 
 
@@ -57,8 +62,7 @@ class ScalablePivotController:
         if backend_uri == ":memory:":
             backend_uri = ":memory:shared_pivot_db"
 
-        self.backend = DuckDBBackend(uri=backend_uri)
-
+        # Initialize Cache
         if isinstance(cache, str):
             if cache == "redis":
                 self.cache = RedisCache(**cache_options)
@@ -69,65 +73,46 @@ class ScalablePivotController:
         else:
             self.cache = cache or MemoryCache(ttl=cache_ttl)
 
-        if planner:
-            self.planner = planner
-        elif planner_name == "ibis":
-            try:
-                import ibis
-                # Support different Ibis backends based on URI
-                if backend_uri.startswith("postgres://"):
-                    from urllib.parse import urlparse
-                    parsed = urlparse(backend_uri)
-                    ibis_con = ibis.postgres.connect(
-                        host=parsed.hostname,
-                        port=parsed.port,
-                        user=parsed.username,
-                        password=parsed.password,
-                        database=parsed.path[1:]  # Remove leading slash
-                    )
-                elif backend_uri.startswith("mysql://"):
-                    from urllib.parse import urlparse
-                    parsed = urlparse(backend_uri)
-                    ibis_con = ibis.mysql.connect(
-                        host=parsed.hostname,
-                        port=parsed.port or 3306,
-                        user=parsed.username,
-                        password=parsed.password,
-                        database=parsed.path[1:]
-                    )
-                elif backend_uri.startswith("bigquery://"):
-                    ibis_con = ibis.bigquery.connect()
-                elif backend_uri.startswith("snowflake://"):
-                    from urllib.parse import urlparse
-                    parsed = urlparse(backend_uri)
-                    ibis_con = ibis.snowflake.connect(
-                        user=parsed.username,
-                        password=parsed.password,
-                        account=parsed.hostname,
-                    )
-                elif backend_uri.startswith("sqlite://"):
-                    db_path = backend_uri.replace("sqlite://", "")
-                    ibis_con = ibis.sqlite.connect(db_path)
-                else:
-                    # Default to DuckDB
-                    ibis_con = ibis.duckdb.connect(backend_uri)
+        # Initialize Backend and Planner
+        self.backend = None
+        self.planner = planner
 
-                self.planner = IbisPlanner(con=ibis_con)
-            except ImportError:
-                self.planner = SQLPlanner(dialect="duckdb")
-            except Exception as e:
-                print(f"Could not connect to database backend: {e}, falling back to SQLPlanner")
+        if not self.planner:
+            if planner_name == "ibis":
+                try:
+                    # Use IbisBackend which handles connection details
+                    self.backend = IbisBackend(connection_uri=backend_uri)
+                    # Create IbisPlanner with the connection from the backend
+                    self.planner = IbisPlanner(con=self.backend.con)
+                except Exception as e:
+                    print(f"Could not connect to database backend via Ibis: {e}, falling back to SQLPlanner/DuckDB")
+                    # Fallback to local DuckDB for safety
+                    self.backend = DuckDBBackend(uri=backend_uri)
+                    self.planner = SQLPlanner(dialect="duckdb")
+            else:
+                self.backend = DuckDBBackend(uri=backend_uri)
                 self.planner = SQLPlanner(dialect="duckdb")
         else:
-            self.planner = SQLPlanner(dialect="duckdb")
+            # If planner is provided, try to infer backend or create a default one
+            # This path assumes the caller manages the backend/planner relationship
+            if not self.backend:
+                # If planner has a connection, try to use it
+                if hasattr(self.planner, 'con'):
+                    self.backend = IbisBackend(connection=self.planner.con)
+                else:
+                    self.backend = DuckDBBackend(uri=backend_uri)
 
         # Enhanced components for scalability
+        # Pass Ibis connection to DiffEngine for backend operations
+        diff_engine_backend = self.backend.con if isinstance(self.backend, IbisBackend) else None
+        
         self.diff_engine = QueryDiffEngine(
             cache=self.cache,
             default_ttl=cache_ttl,
             tile_size=tile_size,
             enable_tiles=enable_tiles,
-            enable_delta_updates=enable_delta
+            enable_delta_updates=enable_delta,
+            backend=diff_engine_backend
         )
         
         self.tree_manager = TreeExpansionManager(self)
@@ -135,32 +120,41 @@ class ScalablePivotController:
         # Scalability features (already set earlier)
         self.enable_streaming = enable_streaming
         if enable_streaming:
+            # IncrementalMaterializedViewManager expects an Ibis connection
+            # Use backend.con if available, or planner.con as fallback
+            con = self.backend.con if isinstance(self.backend, IbisBackend) else getattr(self.planner, 'con', None)
             self.streaming_processor = StreamAggregationProcessor()
 
         self.enable_incremental_views = enable_incremental_views
         if enable_incremental_views:
-            self.incremental_view_manager = IncrementalMaterializedViewManager(self.backend)
+            con = self.backend.con if isinstance(self.backend, IbisBackend) else getattr(self.planner, 'con', None)
+            self.incremental_view_manager = IncrementalMaterializedViewManager(con)
 
         # Advanced hierarchical managers
-        self.materialized_hierarchy_manager = MaterializedHierarchyManager(self.backend, self.cache)
+        con = self.backend.con if isinstance(self.backend, IbisBackend) else getattr(self.planner, 'con', None)
+        self.materialized_hierarchy_manager = MaterializedHierarchyManager(con, self.cache)
 
         # Performance managers
+        # HierarchicalVirtualScrollManager expects an IbisPlanner instance
         self.virtual_scroll_manager = HierarchicalVirtualScrollManager(self.planner, self.cache, self.materialized_hierarchy_manager)
-        self.progressive_loader = ProgressiveDataLoader(self.backend, self.cache)
+        # ProgressiveDataLoader expects an Ibis connection
+        self.progressive_loader = ProgressiveDataLoader(con, self.cache)
 
 
         # Initialize real pattern analyzer for intelligent prefetching
-        from pivot_engine.materialized_hierarchy_manager import UserPatternAnalyzer
+        from pivot_engine.intelligent_prefetch_manager import UserPatternAnalyzer
 
         self.intelligent_prefetch_manager = IntelligentPrefetchManager(
             session_tracker=None,  # Would be injected
             pattern_analyzer=UserPatternAnalyzer(cache=self.cache),  # Real pattern analyzer
-            backend=self.backend,
+            backend=con, # Prefetch Manager expects an Ibis connection
             cache=self.cache
         )
-        self.pruning_manager = HierarchyPruningManager(self.backend)
+        # PruningManager expects an Ibis connection
+        self.pruning_manager = HierarchyPruningManager(con)
+        # ProgressiveHierarchicalLoader expects an Ibis connection
         self.progressive_hierarchy_loader = ProgressiveHierarchicalLoader(
-            self.backend, self.cache, self.pruning_manager
+            con, self.cache, self.pruning_manager
         )
 
         # CDC for real-time updates
@@ -172,7 +166,9 @@ class ScalablePivotController:
 
     async def setup_cdc(self, table_name: str, change_stream):
         """Setup CDC for real-time tracking of data changes"""
-        self.cdc_manager = PivotCDCManager(self.backend, change_stream)
+        # PivotCDCManager expects an Ibis connection
+        con = self.backend.con if isinstance(self.backend, IbisBackend) else getattr(self.planner, 'con', None)
+        self.cdc_manager = PivotCDCManager(con, change_stream)
 
         await self.cdc_manager.setup_cdc(table_name)
 
@@ -234,13 +230,17 @@ class ScalablePivotController:
         """Execute a pivot query with all scalability features"""
         self._request_count += 1
         spec = self._normalize_spec(spec)
-        plan = self.planner.plan(spec)
-        metadata = plan.get("metadata", {})
+        plan_result = self.planner.plan(spec) # Returns {"queries": List[IbisExpr], "metadata": {...}}
+        metadata = plan_result.get("metadata", {})
+        queries_to_run = plan_result.get("queries", [])
+
+        # Queries in plan_result.queries are now Ibis expressions
+        # The logic here needs to adapt to handle Ibis expressions directly
 
         if metadata.get("needs_column_discovery"):
-            result_table = self._execute_topn_pivot(spec, plan, force_refresh)
+            result_table = self._execute_topn_pivot(spec, plan_result, force_refresh)
         else:
-            result_table = self._execute_standard_pivot(spec, plan, force_refresh)
+            result_table = self._execute_standard_pivot(spec, plan_result, force_refresh)
 
         # Final conversion based on requested format
         if return_format == "dict":
@@ -248,57 +248,85 @@ class ScalablePivotController:
 
         return result_table
 
-    def _execute_standard_pivot(self, spec: Any, plan: Dict[str, Any], force_refresh: bool) -> pa.Table:
+    def _execute_standard_pivot(self, spec: Any, plan_result: Dict[str, Any], force_refresh: bool) -> pa.Table:
         """Execute standard pivot with all scalability optimizations"""
-        queries_to_run, strategy = self.diff_engine.plan(plan, spec, force_refresh=force_refresh)
+        # The diff_engine.plan needs to be updated to work with Ibis expressions
+        # For now, we are passing the entire plan_result which contains IbisExpr
+        queries_to_run, strategy = self.diff_engine.plan(plan_result, spec, force_refresh=force_refresh)
 
         self._cache_hits += strategy.get("cache_hits", 0)
         self._cache_misses += len(queries_to_run)
 
-        results = [self.backend.execute(query) for query in queries_to_run]
+        results = []
+        for query_expr in queries_to_run:
+            if hasattr(query_expr, 'to_pyarrow'): # Check if it's an Ibis expression
+                # Execute the Ibis expression directly
+                try:
+                    results.append(query_expr.to_pyarrow())
+                except Exception as e:
+                    print(f"Error executing Ibis expression: {e}")
+                    results.append(pa.table({}))
+            else:
+                # Fallback for SQLPlanner legacy dicts
+                # This should ideally be removed for 100% Ibis purity, but kept for safety with legacy planner
+                if self.backend and hasattr(self.backend, 'execute'):
+                    results.append(self.backend.execute(query_expr))
+                else:
+                     print(f"Error: Cannot execute legacy query format with current backend.")
+                     results.append(pa.table({}))
+
 
         # Get the main aggregation result if available
         main_result = results[0] if results else pa.table({}) if pa is not None else None
 
         # Compute totals using Arrow operations if needed
-        metadata = plan.get("metadata", {})
+        metadata = plan_result.get("metadata", {})
         if metadata.get("needs_totals", False) and main_result is not None and main_result.num_rows > 0:
             # Calculate totals from the main result using Arrow compute
             main_result = self._compute_totals_arrow(main_result, metadata)
 
-        final_table = self.diff_engine.merge_and_finalize([main_result] if main_result is not None else [], plan, spec, strategy)
+        # The diff_engine.merge_and_finalize also needs to be updated for Ibis expressions
+        # For now, it will receive pyarrow tables
+        final_table = self.diff_engine.merge_and_finalize([main_result] if main_result is not None else [], plan_result, spec, strategy)
 
         return main_result if main_result is not None else pa.table({}) if pa is not None else None
 
-    def _execute_topn_pivot(self, spec: Any, plan: Dict[str, Any], force_refresh: bool) -> pa.Table:
+    def _execute_topn_pivot(self, spec: Any, plan_result: Dict[str, Any], force_refresh: bool) -> pa.Table:
         """Execute top-N pivot"""
-        queries = plan.get("queries", [])
-        col_query = queries[0]
-        col_cache_key = self._cache_key_for_query(col_query, spec)
+        # queries now contains Ibis expressions
+        queries = plan_result.get("queries", [])
+        col_ibis_expr = queries[0] # This should be an Ibis expression
+        
+        # The cache key needs to adapt to Ibis expressions
+        col_cache_key = self._cache_key_for_query(col_ibis_expr, spec)
         cached_cols_table = self.cache.get(col_cache_key) if not force_refresh else None
 
         if cached_cols_table:
             column_values = cached_cols_table.column("_col_key").to_pylist()
             self._cache_hits += 1
         else:
-            col_results_table = self.backend.execute(col_query)
+            # Execute the Ibis expression directly
+            col_results_table = col_ibis_expr.to_pyarrow()
             column_values = col_results_table.column("_col_key").to_pylist()
             self.cache.set(col_cache_key, col_results_table)
             self._cache_misses += 1
 
-        pivot_query = self.planner.build_pivot_query_from_columns(spec, column_values)
-        pivot_cache_key = self._cache_key_for_query(pivot_query, spec)
+        # planner.build_pivot_query_from_columns now returns an Ibis expression
+        pivot_ibis_expr = self.planner.build_pivot_query_from_columns(spec, column_values)
+        
+        pivot_cache_key = self._cache_key_for_query(pivot_ibis_expr, spec)
         cached_pivot_table = self.cache.get(pivot_cache_key) if not force_refresh else None
 
         if cached_pivot_table:
             result_table = cached_pivot_table
         else:
-            pivot_results_table = self.backend.execute(pivot_query)
+            # Execute the Ibis expression directly
+            pivot_results_table = pivot_ibis_expr.to_pyarrow()
             self.cache.set(pivot_cache_key, pivot_results_table)
             result_table = pivot_results_table
 
         # Compute totals using Arrow operations if needed
-        metadata = plan.get("metadata", {})
+        metadata = plan_result.get("metadata", {})
         if metadata.get("needs_totals", False) and result_table is not None and result_table.num_rows > 0:
             result_table = self._compute_totals_arrow(result_table, metadata)
 
@@ -310,8 +338,11 @@ class ScalablePivotController:
         arrow_table: pa.Table,
         register_checkpoint: bool = True
     ):
-        """Load data from Arrow table with CDC registration"""
-        self.backend.create_table_from_arrow(table_name, arrow_table)
+        # Use the Ibis connection to create tables from Arrow, making them visible to the IbisPlanner
+        con = self.backend.con if isinstance(self.backend, IbisBackend) else getattr(self.planner, 'con', None)
+        if hasattr(con, 'create_table'):
+            con.create_table(table_name, arrow_table, overwrite=True)
+        
         if register_checkpoint:
             self.register_delta_checkpoint(table_name, timestamp=time.time())
         
@@ -322,7 +353,9 @@ class ScalablePivotController:
     def register_delta_checkpoint(self, table: str, timestamp: float = None, max_id: Optional[int] = None, incremental_field: str = "updated_at"):
         """Register a delta checkpoint for incremental updates"""
         timestamp = timestamp or time.time()
+        # The diff_engine.register_delta_checkpoint needs to be updated to work with Ibis as well
         self.diff_engine.register_delta_checkpoint(table, timestamp, max_id, incremental_field)
+
 
     def _normalize_spec(self, spec: Any) -> Any:
         """Normalize the pivot spec"""
@@ -352,7 +385,7 @@ class ScalablePivotController:
             rows_as_lists.append(row_list)
 
         next_cursor = None
-        if table.num_rows == spec.limit:
+        if spec.limit and table.num_rows == spec.limit: # Check if result size matches limit
             next_cursor = self._generate_next_cursor(table, spec)
 
         return {
@@ -442,19 +475,27 @@ class ScalablePivotController:
 
         return cursor if cursor else None
 
-    def _cache_key_for_query(self, query: Dict[str, Any], spec: Any) -> str:
-        """Generate cache key for a query"""
+    def _cache_key_for_query(self, ibis_expr: IbisTable, spec: Any) -> str:
+        """Generate cache key for an Ibis expression."""
         import json
         import hashlib
-        spec_dict = spec.to_dict() if hasattr(spec, 'to_dict') else spec
-        items = {
-            "sql": query.get("sql"),
-            "params": tuple(query.get("params", [])),
-            "spec_hash": hashlib.sha256(json.dumps(spec_dict, sort_keys=True, default=str).encode()).hexdigest()[:16]
-        }
-        key_str = json.dumps(items, sort_keys=True)
-        key_hash = hashlib.sha256(key_str.encode()).hexdigest()[:32]
-        return f"pivot:query:{key_hash}"
+        
+        # Use Ibis expression hash or compiled string for the key
+        # Compiling to SQL here might be expensive just for caching, but ensures uniqueness
+        # Alternatively, use a structural hash of the Ibis expression object if Ibis provides one
+        try:
+            # Attempt to compile the expression to SQL for a unique string representation
+            # This is a robust way to get a unique key for the query itself
+            compiled_sql = str(self.planner.con.compile(ibis_expr))
+            # Include the spec hash as well to ensure filter/sort context is captured
+            spec_hash = hashlib.sha256(json.dumps(spec.to_dict(), sort_keys=True, default=str).encode()).hexdigest()[:16]
+            key_str = f"{compiled_sql}-{spec_hash}"
+            key_hash = hashlib.sha256(key_str.encode()).hexdigest()[:32]
+            return f"pivot_ibis:query:{key_hash}"
+        except Exception as e:
+            # Fallback if compilation fails (e.g., incomplete expression)
+            print(f"Warning: Could not compile Ibis expression for cache key: {e}")
+            return f"pivot_ibis:query_fallback:{hashlib.sha256(str(ibis_expr).encode()).hexdigest()[:32]}"
 
     def run_hierarchical_pivot_batch_load(
         self,
@@ -488,19 +529,11 @@ class ScalablePivotController:
         return result
 
     def run_pruned_hierarchical_pivot(self, spec: PivotSpec, expanded_paths: List[List[str]],
-                                          user_preferences: Dict[str, Any]):
-        """Run hierarchical pivot with intelligent pruning"""
-        # Get the hierarchical data
-        hierarchy_data = self.materialized_hierarchy_manager.get_optimized_hierarchical_data(
-            spec, expanded_paths
+                                      user_preferences: Optional[Dict[str, Any]] = None):
+        """Run hierarchical pivot with pruning based on user preferences"""
+        return self.progressive_hierarchy_loader.load_progressive_hierarchy(
+            spec, expanded_paths, user_preferences
         )
-
-        # Apply pruning
-        pruned_data = self.pruning_manager.apply_pruning_strategy(
-            hierarchy_data, user_preferences
-        )
-
-        return {"data": pruned_data, "pruning_applied": True}
 
     def run_pivot_arrow(
         self,

@@ -52,7 +52,7 @@ class ScalablePivotApplication:
         if FASTAPI_AVAILABLE:
             # Import microservices only if FastAPI is available
             from pivot_engine.pivot_microservices.ui_proxy.ui_proxy_service import UIPivotService
-            from pivot_engine.pivot_microservices.caching.caching_service import CachingService
+            from pivot_engine.pivot_microservices.caching.caching_service import CacheService
             from pivot_engine.pivot_microservices.execution.execution_service import ExecutionService
             from pivot_engine.pivot_microservices.planning.query_planning_service import QueryPlanningService
 
@@ -65,7 +65,7 @@ class ScalablePivotApplication:
                 'compression': True
             }
 
-            self.caching_service = CachingService(service_config)
+            self.caching_service = CacheService(service_config)
             self.execution_service = ExecutionService(service_config)
             self.planning_service = QueryPlanningService(service_config)
 

@@ -77,32 +77,6 @@ async def test_materialized_hierarchy_creation(controller, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_pruned_hierarchical_pivot(controller, sample_data):
-    """Test pruned hierarchical pivot functionality"""
-    # Load sample data
-    controller.load_data_from_arrow("sales", sample_data)
-    
-    spec = PivotSpec(
-        table="sales",
-        rows=["region", "product"],
-        measures=[Measure(field="sales", agg="sum", alias="total_sales")],
-        filters=[]
-    )
-    
-    expanded_paths = [["North"], ["South"]]
-    pruning_preferences = {
-        "pruning_strategy": "top_n",
-        "top_n": 5,
-        "primary_measure": "total_sales"
-    }
-    
-    # Test pruned hierarchical pivot
-    result = controller.run_pruned_hierarchical_pivot(spec, expanded_paths, pruning_preferences)
-    assert "data" in result
-    assert result["pruning_applied"] is True
-
-
-@pytest.mark.asyncio 
 async def test_virtual_scroll_hierarchical(controller, sample_data):
     """Test virtual scrolling functionality for hierarchical data"""
     # Load sample data

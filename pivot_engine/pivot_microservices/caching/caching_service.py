@@ -6,9 +6,9 @@ import json
 import hashlib
 from typing import Dict, Any, Optional, Union
 import pyarrow as pa
-from ..cache.memory_cache import MemoryCache
-from ..cache.redis_cache import RedisCache
-from ..types.pivot_spec import PivotSpec
+from pivot_engine.cache.memory_cache import MemoryCache
+from pivot_engine.cache.redis_cache import RedisCache
+from pivot_engine.types.pivot_spec import PivotSpec
 
 
 class CacheService:

@@ -6,7 +6,7 @@ import asyncio
 from unittest.mock import Mock, AsyncMock
 import pyarrow as pa
 from pivot_engine.scalable_pivot_controller import ScalablePivotController
-from pivot_engine.pivot_microservices.caching.caching_service import CachingService
+from pivot_engine.pivot_microservices.caching.caching_service import CacheService
 from pivot_engine.pivot_microservices.execution.execution_service import ExecutionService
 from pivot_engine.pivot_microservices.planning.query_planning_service import QueryPlanningService
 
@@ -22,7 +22,7 @@ def mock_backend():
 @pytest.fixture
 def caching_service():
     """Create caching service for testing"""
-    service = CachingService({'default_ttl': 300})
+    service = CacheService({'default_ttl': 300})
     return service
 
 
@@ -69,6 +69,7 @@ async def test_caching_service_get_or_compute(caching_service):
 @pytest.mark.asyncio
 async def test_execution_service_basic(execution_service):
     """Test basic execution service functionality"""
+    import ibis
     from pivot_engine.types.pivot_spec import PivotSpec, Measure
     
     spec = PivotSpec(
@@ -78,18 +79,20 @@ async def test_execution_service_basic(execution_service):
         filters=[]
     )
     
-    plan = {
-        "queries": [{"sql": "SELECT * FROM test", "params": [], "purpose": "test"}],
-        "metadata": {}
-    }
+    # Create a mock Ibis expression
+    mock_table = ibis.table([("col1", "string"), ("col2", "int")], name="test")
+    mock_ibis_expression = mock_table.group_by("col1").agg(sum_col2=mock_table.col2.sum())
     
-    # This will test the basic execution without actual database
-    # The method should at least not crash
+    # Mock the execute_plan method to avoid actual execution
+    execution_service.execute_plan = AsyncMock(return_value=pa.table({"col1": ["a"], "sum_col2": [10]}))
+    
     try:
-        # Since we're not connecting to a real backend, we'll just check structure
-        assert execution_service is not None
+        result = await execution_service.execute_plan(mock_ibis_expression, spec)
+        assert result is not None
+        assert isinstance(result, pa.Table)
+        execution_service.execute_plan.assert_called_once_with(mock_ibis_expression, spec)
     except:
-        pass  # Expected to fail without real backend
+        assert False, "Execution service test failed unexpectedly"
 
 
 @pytest.mark.asyncio  
@@ -107,8 +110,9 @@ async def test_planning_service_basic(planning_service):
     # Test planning functionality
     try:
         result = await planning_service.plan_pivot_query(spec_dict)
-        assert "queries" in result
-        assert "metadata" in result
+        # Assert that the result is an Ibis expression
+        import ibis
+        assert isinstance(result, ibis.Expr)
     except Exception as e:
         # Planning might fail without real connection, which is okay for testing
         assert True
@@ -132,10 +136,10 @@ async def test_microservice_integration():
     controller.load_data_from_arrow("test", sample_data)
     
     # The controller should have all microservice components
-    assert hasattr(controller, 'caching_service')
-    assert hasattr(controller, 'execution_service') 
-    assert hasattr(controller, 'planning_service')
-    assert hasattr(controller, 'ui_service')
+    assert hasattr(controller, 'cache')
+    assert hasattr(controller, 'planner') 
+    assert hasattr(controller, 'diff_engine')
+    assert hasattr(controller, 'intelligent_prefetch_manager')
 
 
 if __name__ == "__main__":

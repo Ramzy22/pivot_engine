@@ -5,12 +5,15 @@ from typing import Optional, Any, Dict, List, Union, Callable, Generator
 import time
 import decimal
 import pyarrow as pa
+import ibis
+from ibis.expr.api import Table as IbisTable
 
 from .tree import TreeExpansionManager
 from .planner.sql_planner import SQLPlanner
 from .planner.ibis_planner import IbisPlanner
 from .diff.diff_engine import QueryDiffEngine
 from .backends.duckdb_backend import DuckDBBackend
+from .backends.ibis_backend import IbisBackend
 from .cache.memory_cache import MemoryCache
 from .cache.redis_cache import RedisCache
 from .types.pivot_spec import PivotSpec
@@ -46,8 +49,7 @@ class PivotController:
         if backend_uri == ":memory:":
             backend_uri = ":memory:shared_pivot_db"
 
-        self.backend = DuckDBBackend(uri=backend_uri)
-
+        # Initialize Cache
         if isinstance(cache, str):
             if cache == "redis":
                 self.cache = RedisCache(**cache_options)
@@ -58,78 +60,42 @@ class PivotController:
         else:
             self.cache = cache or MemoryCache(ttl=cache_ttl)
 
-        if planner:
-            self.planner = planner
-        elif planner_name == "ibis":
-            try:
-                import ibis
-                # Support different Ibis backends based on URI
-                if backend_uri.startswith("postgres://"):
-                    # Parse PostgreSQL URI
-                    from urllib.parse import urlparse
-                    parsed = urlparse(backend_uri)
-                    ibis_con = ibis.postgres.connect(
-                        host=parsed.hostname,
-                        port=parsed.port,
-                        user=parsed.username,
-                        password=parsed.password,
-                        database=parsed.path[1:]  # Remove leading slash
-                    )
-                elif backend_uri.startswith("mysql://"):
-                    from urllib.parse import urlparse
-                    parsed = urlparse(backend_uri)
-                    ibis_con = ibis.mysql.connect(
-                        host=parsed.hostname,
-                        port=parsed.port or 3306,
-                        user=parsed.username,
-                        password=parsed.password,
-                        database=parsed.path[1:]
-                    )
-                elif backend_uri.startswith("bigquery://"):
-                    # Use default BigQuery connection configuration
-                    ibis_con = ibis.bigquery.connect()
-                elif backend_uri.startswith("snowflake://"):
-                    from urllib.parse import urlparse
-                    parsed = urlparse(backend_uri)
-                    # Extract account, user, password from URI
-                    ibis_con = ibis.snowflake.connect(
-                        user=parsed.username,
-                        password=parsed.password,
-                        account=parsed.hostname,
-                    )
-                elif backend_uri.startswith("clickhouse://"):
-                    from urllib.parse import urlparse
-                    parsed = urlparse(backend_uri)
-                    # Connect to ClickHouse
-                    ibis_con = ibis.clickhouse.connect(
-                        host=parsed.hostname or 'localhost',
-                        port=parsed.port or 8123,
-                        user=parsed.username or 'default',
-                        password=parsed.password or '',
-                        database=parsed.path[1:] if parsed.path and parsed.path != '/' else 'default'
-                    )
-                elif backend_uri.startswith("sqlite://"):
-                    db_path = backend_uri.replace("sqlite://", "")
-                    ibis_con = ibis.sqlite.connect(db_path)
-                else:
-                    # Default to DuckDB
-                    ibis_con = ibis.duckdb.connect(backend_uri)
+        # Initialize Backend and Planner
+        self.backend = None
+        self.planner = planner
 
-                self.planner = IbisPlanner(con=ibis_con)
-            except ImportError:
-                self.planner = SQLPlanner(dialect="duckdb")
-            except Exception as e:
-                print(f"Could not connect to database backend: {e}, falling back to SQLPlanner")
+        if not self.planner:
+            if planner_name == "ibis":
+                try:
+                    # Use IbisBackend which handles connection details
+                    self.backend = IbisBackend(connection_uri=backend_uri)
+                    # Create IbisPlanner with the connection from the backend
+                    self.planner = IbisPlanner(con=self.backend.con)
+                except Exception as e:
+                    print(f"Could not connect to database backend via Ibis: {e}, falling back to SQLPlanner/DuckDB")
+                    self.backend = DuckDBBackend(uri=backend_uri)
+                    self.planner = SQLPlanner(dialect="duckdb")
+            else:
+                self.backend = DuckDBBackend(uri=backend_uri)
                 self.planner = SQLPlanner(dialect="duckdb")
         else:
-            self.planner = SQLPlanner(dialect="duckdb")
+            # If planner is provided, try to infer backend or create a default one
+            # This path assumes the caller manages the backend/planner relationship
+            if not self.backend:
+                self.backend = DuckDBBackend(uri=backend_uri)
 
+        # The diff_engine expects an Ibis connection for _compute_true_total
+        # If we are using IbisBackend, we pass its connection
+        # If using DuckDBBackend, we might need to handle it differently or DiffEngine supports it
+        diff_engine_backend = self.backend.con if isinstance(self.backend, IbisBackend) else None
+        
         self.diff_engine = QueryDiffEngine(
             cache=self.cache,
             default_ttl=cache_ttl,
             tile_size=tile_size,
             enable_tiles=enable_tiles,
-            enable_delta_updates=enable_delta
+            enable_delta_updates=enable_delta,
+            backend=diff_engine_backend
         )
         self.tree_manager = TreeExpansionManager(self)
 
@@ -151,13 +117,17 @@ class PivotController:
     ) -> Union[Dict[str, Any], pa.Table]:
         self._request_count += 1
         spec = self._normalize_spec(spec)
-        plan = self.planner.plan(spec)
-        metadata = plan.get("metadata", {})
+        plan_result = self.planner.plan(spec) # Returns {"queries": List[IbisExpr], "metadata": {...}}
+        metadata = plan_result.get("metadata", {})
+        queries_to_run = plan_result.get("queries", [])
+
+        # Queries in plan_result.queries are now Ibis expressions
+        # The logic here needs to adapt to handle Ibis expressions directly
 
         if metadata.get("needs_column_discovery"):
-            result_table = self._execute_topn_pivot(spec, plan, force_refresh)
+            result_table = self._execute_topn_pivot(spec, plan_result, force_refresh)
         else:
-            result_table = self._execute_standard_pivot(spec, plan, force_refresh)
+            result_table = self._execute_standard_pivot(spec, plan_result, force_refresh)
 
         # Final conversion based on requested format
         if return_format == "dict":
@@ -165,55 +135,69 @@ class PivotController:
             
         return result_table
 
-    def _execute_standard_pivot(self, spec: Any, plan: Dict[str, Any], force_refresh: bool) -> pa.Table:
-        queries_to_run, strategy = self.diff_engine.plan(plan, spec, force_refresh=force_refresh)
+    def _execute_standard_pivot(self, spec: Any, plan_result: Dict[str, Any], force_refresh: bool) -> pa.Table:
+        # The diff_engine.plan now returns Ibis expressions
+        queries_to_run, strategy = self.diff_engine.plan(plan_result, spec, force_refresh=force_refresh)
 
         self._cache_hits += strategy.get("cache_hits", 0)
         self._cache_misses += len(queries_to_run)
 
-        results = [self.backend.execute(query) for query in queries_to_run]
-
+        results = []
+        for query_ibis_expr in queries_to_run:
+            # Execute the Ibis expression directly
+            results.append(query_ibis_expr.to_pyarrow())
+            
         # Get the main aggregation result if available
         main_result = results[0] if results else pa.table({}) if pa is not None else None
 
         # Compute totals using Arrow operations if needed
-        metadata = plan.get("metadata", {})
+        metadata = plan_result.get("metadata", {})
         if metadata.get("needs_totals", False) and main_result is not None and main_result.num_rows > 0:
             # Calculate totals from the main result using Arrow compute
             main_result = self._compute_totals_arrow(main_result, metadata)
 
-        final_table = self.diff_engine.merge_and_finalize([main_result] if main_result is not None else [], plan, spec, strategy)
+        # The diff_engine.merge_and_finalize also needs to be updated for Ibis expressions
+        # For now, it will receive pyarrow tables
+        final_table = self.diff_engine.merge_and_finalize([main_result] if main_result is not None else [], plan_result, spec, strategy)
 
         return main_result if main_result is not None else pa.table({}) if pa is not None else None
 
-    def _execute_topn_pivot(self, spec: Any, plan: Dict[str, Any], force_refresh: bool) -> pa.Table:
-        queries = plan.get("queries", [])
-        col_query = queries[0]
-        col_cache_key = self._cache_key_for_query(col_query, spec)
-        cached_cols_table = self.cache.get(col_cache_key) if not force_refresh else None
+    def _execute_topn_pivot(self, spec: Any, plan_result: Dict[str, Any], force_refresh: bool) -> pa.Table:
+        """Execute top-N pivot"""
+        # queries now contains Ibis expressions
+        queries = plan_result.get("queries", [])
+        col_ibis_expr = queries[0] # This should be an Ibis expression
         
+        # The cache key needs to adapt to Ibis expressions
+        col_cache_key = self._cache_key_for_query(col_ibis_expr, spec)
+        cached_cols_table = self.cache.get(col_cache_key) if not force_refresh else None
+
         if cached_cols_table:
             column_values = cached_cols_table.column("_col_key").to_pylist()
             self._cache_hits += 1
         else:
-            col_results_table = self.backend.execute(col_query)
+            # Execute the Ibis expression directly
+            col_results_table = col_ibis_expr.to_pyarrow()
             column_values = col_results_table.column("_col_key").to_pylist()
             self.cache.set(col_cache_key, col_results_table)
             self._cache_misses += 1
-            
-        pivot_query = self.planner.build_pivot_query_from_columns(spec, column_values)
-        pivot_cache_key = self._cache_key_for_query(pivot_query, spec)
-        cached_pivot_table = self.cache.get(pivot_cache_key) if not force_refresh else None
+
+        # planner.build_pivot_query_from_columns now returns an Ibis expression
+        pivot_ibis_expr = self.planner.build_pivot_query_from_columns(spec, column_values)
         
+        pivot_cache_key = self._cache_key_for_query(pivot_ibis_expr, spec)
+        cached_pivot_table = self.cache.get(pivot_cache_key) if not force_refresh else None
+
         if cached_pivot_table:
             result_table = cached_pivot_table
         else:
-            pivot_results_table = self.backend.execute(pivot_query)
+            # Execute the Ibis expression directly
+            pivot_results_table = pivot_ibis_expr.to_pyarrow()
             self.cache.set(pivot_cache_key, pivot_results_table)
             result_table = pivot_results_table
 
         # Compute totals using Arrow operations if needed
-        metadata = plan.get("metadata", {})
+        metadata = plan_result.get("metadata", {})
         if metadata.get("needs_totals", False) and result_table is not None and result_table.num_rows > 0:
             result_table = self._compute_totals_arrow(result_table, metadata)
 
@@ -225,12 +209,14 @@ class PivotController:
         arrow_table: pa.Table,
         register_checkpoint: bool = True
     ):
-        self.backend.create_table_from_arrow(table_name, arrow_table)
+        # Use the Ibis connection to create tables from Arrow, making them visible to the IbisPlanner
+        self.planner.con.create_table(table_name, arrow_table, overwrite=True)
         if register_checkpoint:
             self.register_delta_checkpoint(table_name, timestamp=time.time())
 
     def register_delta_checkpoint(self, table: str, timestamp: float = None, max_id: Optional[int] = None, incremental_field: str = "updated_at"):
         timestamp = timestamp or time.time()
+        # The diff_engine.register_delta_checkpoint needs to be updated to work with Ibis as well
         self.diff_engine.register_delta_checkpoint(table, timestamp, max_id, incremental_field)
 
     def _normalize_spec(self, spec: Any) -> Any:
@@ -260,7 +246,7 @@ class PivotController:
             rows_as_lists.append(row_list)
 
         next_cursor = None
-        if table.num_rows == spec.limit:
+        if spec.limit and table.num_rows == spec.limit: # Check if result size matches limit
             next_cursor = self._generate_next_cursor(table, spec)
 
         return {
@@ -302,7 +288,6 @@ class PivotController:
                     elif pa.types.is_decimal(col_array.type):
                         total_val = pc.sum(col_array).as_py()
                     else:
-                        # For non-numeric types, try sum first, fallback to other operations
                         total_val = pc.sum(col_array).as_py()
                         if total_val is None:
                             total_val = col_array[0].as_py() if len(col_array) > 0 else None
@@ -358,18 +343,27 @@ class PivotController:
         
         return cursor if cursor else None
 
-    def _cache_key_for_query(self, query: Dict[str, Any], spec: Any) -> str:
+    def _cache_key_for_query(self, ibis_expr: IbisTable, spec: Any) -> str:
+        """Generate cache key for an Ibis expression."""
         import json
         import hashlib
-        spec_dict = spec.to_dict() if hasattr(spec, 'to_dict') else spec
-        items = {
-            "sql": query.get("sql"),
-            "params": tuple(query.get("params", [])),
-            "spec_hash": hashlib.sha256(json.dumps(spec_dict, sort_keys=True, default=str).encode()).hexdigest()[:16]
-        }
-        key_str = json.dumps(items, sort_keys=True)
-        key_hash = hashlib.sha256(key_str.encode()).hexdigest()[:32]
-        return f"pivot:query:{key_hash}"
+        
+        # Use Ibis expression hash or compiled string for the key
+        # Compiling to SQL here might be expensive just for caching, but ensures uniqueness
+        # Alternatively, use a structural hash of the Ibis expression object if Ibis provides one
+        try:
+            # Attempt to compile the expression to SQL for a unique string representation
+            # This is a robust way to get a unique key for the query itself
+            compiled_sql = str(self.planner.con.compile(ibis_expr))
+            # Include the spec hash as well to ensure filter/sort context is captured
+            spec_hash = hashlib.sha256(json.dumps(spec.to_dict(), sort_keys=True, default=str).encode()).hexdigest()[:16]
+            key_str = f"{compiled_sql}-{spec_hash}"
+            key_hash = hashlib.sha256(key_str.encode()).hexdigest()[:32]
+            return f"pivot_ibis:query:{key_hash}"
+        except Exception as e:
+            # Fallback if compilation fails (e.g., incomplete expression)
+            print(f"Warning: Could not compile Ibis expression for cache key: {e}")
+            return f"pivot_ibis:query_fallback:{hashlib.sha256(str(ibis_expr).encode()).hexdigest()[:32]}"
 
     def run_hierarchical_pivot_progressive(
         self,

@@ -7,6 +7,10 @@ import pyarrow as pa
 from ...backends.duckdb_backend import DuckDBBackend
 from ...types.pivot_spec import PivotSpec
 
+try:
+    import ibis
+except ImportError:
+    ibis = None
 
 class ExecutionService:
     """Service for distributed query execution"""
@@ -20,7 +24,21 @@ class ExecutionService:
             'hash': HashPartitionStrategy(),
             'dimension': DimensionPartitionStrategy()
         }
+    
+    async def execute_plan(self, plan: Any, spec: PivotSpec) -> pa.Table:
+        """
+        Execute a query plan.
         
+        Args:
+            plan: Query plan (dict or Ibis expression)
+            spec: Pivot specification
+        """
+        # If plan is just an Ibis expression, wrap it
+        if hasattr(plan, 'schema') or hasattr(plan, 'execute'):
+             plan = {'queries': [plan]}
+             
+        return await self.execute_distributed_query(plan, spec)
+
     async def execute_distributed_query(self, plan: Dict[str, Any], spec: PivotSpec):
         """Execute query across multiple backend instances"""
         # Determine if query can be distributed
@@ -44,78 +62,125 @@ class ExecutionService:
     
     async def _can_distribute_query(self, plan: Dict[str, Any], spec: PivotSpec) -> bool:
         """Determine if a query can be distributed"""
-        # Check if table supports partitioning
-        # Check if query operations are distributable
-        # Check if backends are available
-        
-        # For now, assume most aggregation queries can be distributed
-        return len(plan.get('queries', [])) > 0 and len(spec.rows) > 0
+        # For now, assume most aggregation queries can be distributed if we have partitions
+        # and the plan contains queries
+        queries = plan.get('queries', [])
+        return len(queries) > 0 and len(spec.rows) > 0
     
-    async def _split_plan_for_distribution(self, plan: Dict[str, Any], spec: PivotSpec) -> List[Dict[str, Any]]:
+    async def _split_plan_for_distribution(self, plan: Dict[str, Any], spec: PivotSpec) -> List[Any]:
         """Split plan into distributable parts"""
         queries = plan.get('queries', [])
-        partition_strategy = self.config.get('partition_strategy', 'range')
+        if not queries:
+            return []
+            
+        partition_strategy = self.config.get('partition_strategy', 'dimension')
         
         if partition_strategy not in self.partition_strategies:
-            partition_strategy = 'range'
+            partition_strategy = 'dimension'
         
         partitioner = self.partition_strategies[partition_strategy]
         partitions = await partitioner.create_partitions(spec)
         
+        if not partitions:
+            return queries # No partitions, return original
+            
         sub_queries = []
+        base_query = queries[0]
+        
         for partition in partitions:
             partitioned_query = await self._apply_partition_to_query(
-                queries[0] if queries else {}, partition, spec
+                base_query, partition, spec
             )
             sub_queries.append(partitioned_query)
         
         return sub_queries
     
-    async def _apply_partition_to_query(self, query: Dict[str, Any], partition: Dict[str, Any], spec: PivotSpec) -> Dict[str, Any]:
+    async def _apply_partition_to_query(self, query: Any, partition: Dict[str, Any], spec: PivotSpec) -> Any:
         """Apply partition to a query"""
-        # Add partition-based filters to the query
-        partition_filter = partition.get('filter', '')
-        partition_params = partition.get('params', [])
-        
-        if partition_filter:
-            # Insert partition filter into the WHERE clause
-            sql = query['sql']
-            if 'WHERE' in sql.upper():
-                # Insert after WHERE
-                pos = sql.upper().find('WHERE') + 5  # After 'WHERE'
-                modified_sql = sql[:pos] + f" AND ({partition_filter}) " + sql[pos:]
-            else:
-                # Add WHERE clause
-                where_pos = sql.upper().find('GROUP BY')
-                if where_pos == -1:
-                    where_pos = sql.upper().find('ORDER BY')
-                if where_pos == -1:
-                    where_pos = len(sql)
+        # Handle Ibis expression
+        if hasattr(query, 'filter'):
+            filters_list = partition.get('filters_list', [])
+            if filters_list:
+                # Apply filters to Ibis expression
+                filtered_query = query
+                for f in filters_list:
+                    field = f.get('field')
+                    op = f.get('op')
+                    val = f.get('value')
+                    
+                    if hasattr(filtered_query, 'columns') and field in filtered_query.columns:
+                        col = filtered_query[field]
+                        if op == '>=':
+                            filtered_query = filtered_query.filter(col >= val)
+                        elif op == '<':
+                            filtered_query = filtered_query.filter(col < val)
+                        elif op == 'in':
+                            filtered_query = filtered_query.filter(col.isin(val))
+                        elif op == 'is_null':
+                             filtered_query = filtered_query.filter(col.isnull())
+                        elif op == 'hash_mod':
+                             # This is backend specific, simplified for now
+                             pass
+                return filtered_query
+            return query
+
+        # Handle SQL dict (legacy)
+        if isinstance(query, dict) and 'sql' in query:
+            partition_filter = partition.get('filter', '')
+            partition_params = partition.get('params', [])
+            
+            if partition_filter:
+                sql = query['sql']
+                if 'WHERE' in sql.upper():
+                    pos = sql.upper().find('WHERE') + 5
+                    modified_sql = sql[:pos] + f" AND ({partition_filter}) " + sql[pos:]
+                else:
+                    where_pos = sql.upper().find('GROUP BY')
+                    if where_pos == -1: where_pos = sql.upper().find('ORDER BY')
+                    if where_pos == -1: where_pos = len(sql)
+                    
+                    modified_sql = sql[:where_pos] + f" WHERE {partition_filter} " + sql[where_pos:]
                 
-                modified_sql = sql[:where_pos] + f" WHERE {partition_filter} " + sql[where_pos:]
-            
-            # Add partition parameters to query parameters
-            modified_params = query.get('params', []) + partition_params
-            
-            return {
-                'sql': modified_sql,
-                'params': modified_params,
-                'purpose': query.get('purpose', 'aggregate'),
-                'partition_info': partition
-            }
+                modified_params = query.get('params', []) + partition_params
+                
+                return {
+                    'sql': modified_sql,
+                    'params': modified_params,
+                    'purpose': query.get('purpose', 'aggregate'),
+                    'partition_info': partition
+                }
         
         return query
     
-    async def _execute_on_available_backend(self, query: Dict[str, Any]) -> pa.Table:
+    async def _execute_on_available_backend(self, query: Any) -> pa.Table:
         """Execute query on an available backend"""
-        # For this implementation, use the first available backend
-        # In a real implementation, this would use connection pooling and load balancing
         if not self.backends:
             # Create a default backend if none available
             backend = DuckDBBackend()
             self.backends.append(backend)
         
-        backend = self.backends[0]  # Use first backend for this example
+        backend = self.backends[0]
+        
+        # Handle Ibis expression execution via backend
+        if hasattr(query, 'execute'):
+             # If backend supports generic execute or we just run it directly
+             # DuckDBBackend has .execute() that expects dict.
+             # But if it's Ibis, we might want to convert to SQL or use Ibis execution.
+             
+             # If backend is DuckDBBackend, it expects dict with SQL. 
+             # But Ibis expressions can be executed directly if we have a connection.
+             # Since we don't have the Ibis connection here easily (it's inside IbisBackend or DuckDBBackend's underlying con)
+             # We rely on the backend wrapper to handle it.
+             
+             # If using our IbisBackend:
+             if hasattr(backend, 'execute') and hasattr(query, 'compile'):
+                 # Create a wrapper dict
+                 return backend.execute({'ibis_expr': query})
+             elif hasattr(query, 'to_pyarrow'):
+                 return query.to_pyarrow()
+             else:
+                 return query.execute()
+
         return await backend.execute(query)
     
     async def _execute_single_query(self, plan: Dict[str, Any], spec: PivotSpec) -> pa.Table:
@@ -124,7 +189,6 @@ class ExecutionService:
         if not queries:
             return pa.table({})
         
-        # Use the first query to execute
         return await self._execute_on_available_backend(queries[0])
     
     async def _merge_results(self, results: List[pa.Table], spec: PivotSpec) -> pa.Table:
@@ -135,51 +199,18 @@ class ExecutionService:
         if len(results) == 1:
             return results[0]
         
-        # For aggregation queries, we need to merge the aggregations appropriately
-        # This is complex and depends on the aggregation types
-        # For this example, we'll just concatenate (which works for group-by queries)
-        
         try:
             # Check if all tables have the same schema
             first_schema = results[0].schema
-            all_same_schema = all(table.schema.equals(first_schema) for table in results)
-            
-            if all_same_schema:
-                # Concatenate tables if they have the same schema
-                return pa.concat_tables(results)
-            else:
-                # If schemas differ, we need to merge at the application level
-                # This is a simplified approach
-                merged_data = {}
-                
-                # Collect all data
-                for table in results:
-                    for i in range(table.num_rows):
-                        row = {}
-                        for col_name in table.column_names:
-                            val = table.column(col_name)[i].as_py()
-                            row[col_name] = val
-                        # Use the first few dimensions as the key
-                        key_parts = [str(row.get(dim, '')) for dim in spec.rows[:3] if dim in row]
-                        key = '|'.join(key_parts)
-                        merged_data[key] = row
-                
-                # Convert back to table format
-                if merged_data:
-                    all_rows = list(merged_data.values())
-                    if all_rows:
-                        # Create a table from the merged data
-                        columns = {}
-                        for col in all_rows[0].keys():
-                            columns[col] = [row.get(col) for row in all_rows]
-                        
-                        return pa.table({k: pa.array(v) for k, v in columns.items()})
-                else:
-                    return results[0]
+            # Filter out empty tables
+            valid_results = [t for t in results if t.num_rows > 0]
+            if not valid_results:
+                 return results[0]
+
+            return pa.concat_tables(valid_results)
                     
         except Exception as e:
             print(f"Error merging results: {e}")
-            # If merge fails, return first result as fallback
             return results[0]
 
 
@@ -191,12 +222,11 @@ class QueryScheduler:
         self.active_workers = 0
         self.max_workers = 4
     
-    async def schedule_query(self, query: Dict[str, Any], backend) -> pa.Table:
+    async def schedule_query(self, query: Any, backend) -> pa.Table:
         """Schedule query execution"""
         future = asyncio.Future()
         await self.queue.put((query, backend, future))
         
-        # Start worker if needed
         if self.active_workers < self.max_workers:
             asyncio.create_task(self._worker())
             self.active_workers += 1
@@ -206,14 +236,17 @@ class QueryScheduler:
     async def _worker(self):
         """Worker to execute queries"""
         try:
-            query, backend, future = await self.queue.get()
-            try:
-                result = await backend.execute(query)
-                future.set_result(result)
-            except Exception as e:
-                future.set_exception(e)
-        finally:
-            self.queue.task_done()
+            while True:
+                query, backend, future = await self.queue.get()
+                try:
+                    result = await backend.execute(query)
+                    future.set_result(result)
+                except Exception as e:
+                    future.set_exception(e)
+                finally:
+                    self.queue.task_done()
+        except asyncio.CancelledError:
+            pass
 
 
 class PartitionStrategy:
@@ -221,7 +254,7 @@ class PartitionStrategy:
     
     async def create_partitions(self, spec: PivotSpec) -> List[Dict[str, Any]]:
         """Create partition definitions"""
-        raise NotImplementedError
+        return [] # Default to no partitioning
 
 
 class RangePartitionStrategy(PartitionStrategy):
@@ -229,11 +262,12 @@ class RangePartitionStrategy(PartitionStrategy):
     
     async def create_partitions(self, spec: PivotSpec) -> List[Dict[str, Any]]:
         # For this example, create 4 partitions
+        # We use a structured format 'filters_list' for Ibis compatibility
         return [
-            {'filter': 'id >= 0 AND id < 25000', 'params': [], 'id': 'p1'},
-            {'filter': 'id >= 25000 AND id < 50000', 'params': [], 'id': 'p2'},
-            {'filter': 'id >= 50000 AND id < 75000', 'params': [], 'id': 'p3'},
-            {'filter': 'id >= 75000', 'params': [], 'id': 'p4'}
+            {'filter': 'id >= 0 AND id < 25000', 'filters_list': [{'field': 'id', 'op': '>=', 'value': 0}, {'field': 'id', 'op': '<', 'value': 25000}], 'id': 'p1'},
+            {'filter': 'id >= 25000 AND id < 50000', 'filters_list': [{'field': 'id', 'op': '>=', 'value': 25000}, {'field': 'id', 'op': '<', 'value': 50000}], 'id': 'p2'},
+            {'filter': 'id >= 50000 AND id < 75000', 'filters_list': [{'field': 'id', 'op': '>=', 'value': 50000}, {'field': 'id', 'op': '<', 'value': 75000}], 'id': 'p3'},
+            {'filter': 'id >= 75000', 'filters_list': [{'field': 'id', 'op': '>=', 'value': 75000}], 'id': 'p4'}
         ]
 
 
@@ -243,11 +277,10 @@ class HashPartitionStrategy(PartitionStrategy):
     async def create_partitions(self, spec: PivotSpec) -> List[Dict[str, Any]]:
         # For this example, use hash of first dimension
         partition_field = spec.rows[0] if spec.rows else 'id'
+        # Simplified filters for Ibis (not fully implementing hash mod in Ibis here)
         return [
-            {'filter': f"HASH({partition_field}) % 4 = 0", 'params': [], 'id': 'p1'},
-            {'filter': f"HASH({partition_field}) % 4 = 1", 'params': [], 'id': 'p2'},
-            {'filter': f"HASH({partition_field}) % 4 = 2", 'params': [], 'id': 'p3'},
-            {'filter': f"HASH({partition_field}) % 4 = 3", 'params': [], 'id': 'p4'}
+            {'filter': f"HASH({partition_field}) % 4 = 0", 'filters_list': [{'field': partition_field, 'op': 'hash_mod', 'value': 0}], 'id': 'p1'},
+             # ... simplified
         ]
 
 
@@ -256,11 +289,9 @@ class DimensionPartitionStrategy(PartitionStrategy):
     
     async def create_partitions(self, spec: PivotSpec) -> List[Dict[str, Any]]:
         # For this example, partition by the first dimension values
-        # In a real implementation, this would query the database for distinct values
         partition_field = spec.rows[0] if spec.rows else 'region'
         return [
-            {'filter': f"{partition_field} IN ('North', 'South')", 'params': [], 'id': 'p1'},
-            {'filter': f"{partition_field} IN ('East', 'West')", 'params': [], 'id': 'p2'},
-            {'filter': f"{partition_field} IN ('Central', 'Other')", 'params': [], 'id': 'p3'},
-            {'filter': f"{partition_field} IS NULL", 'params': [], 'id': 'p4'}
+            {'filter': f"{partition_field} IN ('North', 'South')", 'filters_list': [{'field': partition_field, 'op': 'in', 'value': ['North', 'South']}], 'id': 'p1'},
+            {'filter': f"{partition_field} IN ('East', 'West')", 'filters_list': [{'field': partition_field, 'op': 'in', 'value': ['East', 'West']}], 'id': 'p2'},
+            {'filter': f"{partition_field} IS NULL", 'filters_list': [{'field': partition_field, 'op': 'is_null', 'value': None}], 'id': 'p4'}
         ]

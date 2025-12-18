@@ -201,9 +201,19 @@ class SQLPlanner:
     Advanced SQL query planner for pivot table operations.
     Optimized for DuckDB with support for complex aggregations.
     Enhanced with advanced planning capabilities: cost estimation and query optimization.
+    
+    DEPRECATED: This planner is legacy and tied to specific SQL dialects (primarily DuckDB).
+    Use IbisPlanner for backend-agnostic planning and execution.
     """
 
     def __init__(self, dialect: str = "duckdb", enable_optimization: bool = True):
+        import warnings
+        warnings.warn(
+            "SQLPlanner is deprecated and will be removed in future versions. "
+            "Please use IbisPlanner for backend-agnostic query planning.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         self.dialect = dialect
         self._query_cache = {}
         self.enable_optimization = enable_optimization

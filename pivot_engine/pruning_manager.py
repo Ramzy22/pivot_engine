@@ -4,11 +4,14 @@ HierarchyPruningManager - Prune less-relevant branches in large hierarchies
 import asyncio
 from typing import Dict, Any, List, Optional, Union
 import pyarrow as pa
+import ibis
+from ibis import BaseBackend as IbisBaseBackend
+from ibis.expr.api import Table as IbisTable
 from pivot_engine.types.pivot_spec import PivotSpec
 
 
 class HierarchyPruningManager:
-    def __init__(self, backend, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, backend: IbisBaseBackend, config: Optional[Dict[str, Any]] = None):
         self.backend = backend
         self.config = config or {}
         
@@ -207,7 +210,7 @@ class HierarchyPruningManager:
 class ProgressiveHierarchicalLoader:
     """Load hierarchy progressively, level by level"""
     
-    def __init__(self, backend, cache, pruning_manager: Optional[HierarchyPruningManager] = None):
+    def __init__(self, backend: IbisBaseBackend, cache, pruning_manager: Optional[HierarchyPruningManager] = None):
         self.backend = backend
         self.cache = cache
         self.pruning_manager = pruning_manager
@@ -270,7 +273,7 @@ class ProgressiveHierarchicalLoader:
                     'loaded': True,
                     'total_levels': len(spec.rows),
                     'progress': (level_idx + 1) / len(spec.rows),
-                    'data_size': sum(len(ld['data']) if hasattr(ld['data'], '__len__') else 0 for ld in level_data)
+                    'data_size': sum(len(ld['data']) if hasattr(ld['data'], 'num_rows') and ld['data'] is not None else 0 for ld in level_data)
                 })
 
         # Add metadata about the load
@@ -298,42 +301,40 @@ class ProgressiveHierarchicalLoader:
         if cached_data:
             return cached_data
 
-        # Build query for this level with parent path filters
-        level_query = self._create_level_query(spec, parent_path, dimension)
-        result = self.backend.execute(level_query)
+        level_ibis_expr = self._create_level_ibis_expression(spec, parent_path, dimension)
+        result = level_ibis_expr.to_pyarrow()
 
         # Cache the result
         self.cache.set(cache_key, result, ttl=self.cache_ttl)
         return result
     
-    def _create_level_query(self, spec: PivotSpec, parent_path: List[str], dimension: str):
-        """Create query for a specific level with parent filters"""
-        # Build WHERE clause for parent path
-        where_parts = []
-        params = []
+    def _create_level_ibis_expression(self, spec: PivotSpec, parent_path: List[str], dimension: str) -> IbisTable:
+        """Create an Ibis expression for a specific level with parent filters"""
+        base_table = self.backend.table(spec.table)
 
-        for i, value in enumerate(parent_path):
-            if i < len(spec.rows):
-                where_parts.append(f"{spec.rows[i]} = ?")
-                params.append(value)
+        # Apply filters for parent path
+        filtered_table = base_table
+        if parent_path:
+            filter_expr = None
+            for i, value in enumerate(parent_path):
+                field = spec.rows[i]
+                condition = (base_table[field] == value)
+                if filter_expr is None:
+                    filter_expr = condition
+                else:
+                    filter_expr &= condition
+            filtered_table = filtered_table.filter(filter_expr)
 
-        where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
-
-        # Build SELECT clause
-        select_parts = [dimension]
-        agg_parts = []
-
+        # Define aggregations in Ibis
+        aggregations = []
         for measure in spec.measures:
-            agg_parts.append(f"{measure.agg}({measure.field}) as {measure.alias}")
+            agg_func = getattr(filtered_table[measure.field], measure.agg)
+            aggregations.append(agg_func().name(measure.alias))
 
-        select_parts.extend(agg_parts)
+        # Build the grouped and aggregated expression
+        agg_expr = filtered_table.group_by(dimension).aggregate(aggregations)
 
-        query = f"""
-        SELECT {', '.join(select_parts)}
-        FROM {spec.table}
-        {where_clause}
-        GROUP BY {dimension}
-        ORDER BY {dimension}
-        """
+        # Apply ordering
+        agg_expr = agg_expr.order_by(ibis.asc(dimension))
 
-        return {'sql': query, 'params': params}
+        return agg_expr

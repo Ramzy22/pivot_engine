@@ -4,11 +4,12 @@ MaterializedHierarchyManager - Pre-compute and store hierarchical rollups for co
 import asyncio
 from typing import Dict, Any, List, Optional
 import ibis
+from ibis import BaseBackend as IbisBaseBackend
 from pivot_engine.types.pivot_spec import PivotSpec
 
 
 class MaterializedHierarchyManager:
-    def __init__(self, backend, cache):
+    def __init__(self, backend: IbisBaseBackend, cache):
         self.backend = backend # Expects an Ibis connection
         self.cache = cache
         self.rollup_tables = {}
