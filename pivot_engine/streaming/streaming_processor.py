@@ -12,13 +12,34 @@ from ibis.expr.api import Table as IbisTable
 
 
 class StreamAggregationProcessor:
-    def __init__(self, kafka_config: Optional[Dict[str, Any]] = None):
+    def __init__(self, kafka_config: Optional[Dict[str, Any]] = None, state_store: Optional[Any] = None):
         self.kafka_config = kafka_config or {}
         self.aggregation_jobs = {}
         self.stream_clients = {}
         self.job_tasks = {}
         self.job_results = {}
         self.job_callbacks = {}
+        
+        # Initialize State Store
+        if state_store:
+            self.state_store = state_store
+        else:
+            # Check if we can use Redis from config
+            if self.kafka_config.get('redis_host'):
+                from pivot_engine.cache.redis_cache import RedisCache
+                from pivot_engine.streaming.state_store import RedisStateStore
+                try:
+                    redis_cache = RedisCache(
+                        host=self.kafka_config.get('redis_host', 'localhost'),
+                        port=self.kafka_config.get('redis_port', 6379)
+                    )
+                    self.state_store = RedisStateStore(redis_cache)
+                except Exception:
+                    from pivot_engine.streaming.state_store import MemoryStateStore
+                    self.state_store = MemoryStateStore()
+            else:
+                from pivot_engine.streaming.state_store import MemoryStateStore
+                self.state_store = MemoryStateStore()
 
     async def create_real_time_aggregation_job(self, pivot_spec: PivotSpec):
         """Create a stream processing job for real-time aggregations"""
@@ -33,11 +54,13 @@ class StreamAggregationProcessor:
             'filters': pivot_spec.filters,
             'window_size': 60,  # 60 seconds default window
             'last_update': time.time(),
-            'current_state': {}  # Stores current aggregated values
+            # 'current_state': {}  REMOVED: State is now managed by state_store
         }
 
         # Initialize current state with empty aggregations
-        self._init_current_state(job_config, pivot_spec.measures)
+        initial_state = {}
+        self._init_current_state_dict(initial_state, pivot_spec.measures)
+        await self.state_store.save_state(job_id, initial_state)
 
         # Store job configuration
         self.aggregation_jobs[job_id] = job_config
@@ -48,14 +71,20 @@ class StreamAggregationProcessor:
 
         return job_id
 
-    def _init_current_state(self, job_config: Dict[str, Any], measures):
-        """Initialize the current state for the job with proper aggregation types"""
+    def _init_current_state_dict(self, state_dict: Dict[str, Any], measures):
+        """Initialize the current state dict with proper aggregation types"""
         for measure in measures:
             alias = measure.alias
             if measure.agg in ['sum', 'avg', 'count']:
-                job_config['current_state'][alias] = 0
+                state_dict[alias] = 0
             elif measure.agg in ['min', 'max']:
-                job_config['current_state'][alias] = None
+                state_dict[alias] = None
+
+    # kept for backward compatibility if needed, but redirects to new method
+    def _init_current_state(self, job_config: Dict[str, Any], measures):
+        # This was modifying job_config['current_state'] directly. 
+        # Since we removed it, this is no-op or we create a temp dict
+        pass
 
     async def _process_job_stream(self, job_id: str):
         """Background task to process stream updates"""
@@ -123,7 +152,9 @@ class StreamAggregationProcessor:
     async def _update_job_state(self, job_id: str, job: Dict[str, Any], record: Dict[str, Any], operation: str):
         """Update job state based on the record and operation"""
         measures = job['measures']
-        current_state = job['current_state']
+        
+        # Fetch current state from store
+        current_state = await self.state_store.get_state(job_id)
 
         for measure in measures:
             field = measure['field']
@@ -139,15 +170,30 @@ class StreamAggregationProcessor:
                     self._apply_aggregation_reverse(current_state, alias, field_value, agg_type)
                 elif operation == 'UPDATE':
                     # For updates, we need old and new values
-                    # This is a simplification - in real implementation would have old and new values
                     self._apply_aggregation_reverse(current_state, alias, record.get(f'old_{field}', field_value), agg_type)
                     self._apply_aggregation(current_state, alias, field_value, agg_type)
 
-        # Update timestamp
+        # Save updated state back to store
+        await self.state_store.save_state(job_id, current_state)
+        
+        # Update timestamp in memory
         job['last_update'] = time.time()
+        
+        # Trigger callbacks
+        if job_id in self.job_callbacks:
+             try:
+                 # Call callback (potentially async handling needed?)
+                 # For now assuming sync callback or fire-and-forget
+                 self.job_callbacks[job_id](current_state)
+             except Exception as e:
+                 print(f"Error in streaming callback: {e}")
 
     def _apply_aggregation(self, current_state: Dict, alias: str, value: Any, agg_type: str):
         """Apply aggregation operation to update the current state"""
+        # Ensure key exists
+        if alias not in current_state:
+            current_state[alias] = 0 if agg_type in ['sum', 'count', 'avg'] else None
+
         if agg_type == 'sum':
             current_state[alias] += value if isinstance(value, (int, float)) else 0
         elif agg_type == 'count':
@@ -170,13 +216,15 @@ class StreamAggregationProcessor:
 
     def _apply_aggregation_reverse(self, current_state: Dict, alias: str, value: Any, agg_type: str):
         """Reverse aggregation operation (for deletes)"""
+        if alias not in current_state:
+             return
+
         if agg_type == 'sum':
             current_state[alias] -= value if isinstance(value, (int, float)) else 0
         elif agg_type == 'count':
             current_state[alias] -= 1
         elif agg_type == 'min' or agg_type == 'max':
             # For min/max, we can't simply reverse - in a real system we'd need to maintain more state
-            # This is a simplification
             pass
         elif agg_type == 'avg':
             current_state[f'{alias}_sum'] = current_state.get(f'{alias}_sum', 0) - value
@@ -190,8 +238,9 @@ class StreamAggregationProcessor:
         """Get the current result for a streaming job"""
         if job_id in self.aggregation_jobs:
             job = self.aggregation_jobs[job_id]
-            # Calculate averages if they exist
-            result = job['current_state'].copy()
+            # Fetch state from store
+            current_state = await self.state_store.get_state(job_id)
+            result = current_state.copy()
 
             # Compute averages based on sum/count
             for k, v in list(result.items()):

@@ -258,6 +258,42 @@ class IbisBackend:
         else:
             self.con.create_table(name, arrow_table)
 
+    def create_index(self, table_name: str, columns: List[str], index_name: Optional[str] = None):
+        """
+        Create a database index on the specified table and columns.
+        This provides a performance boost for large datasets.
+        """
+        if not index_name:
+            # Generate a safe index name
+            import hashlib
+            cols_str = "_".join(columns)
+            hash_suffix = hashlib.md5(cols_str.encode()).hexdigest()[:8]
+            index_name = f"idx_{table_name}_{hash_suffix}"[:63]
+
+        try:
+            # Construct SQL for index creation
+            # Most SQL dialects support "CREATE INDEX [IF NOT EXISTS] name ON table (cols)"
+            # We use a generic approach and handle exceptions
+            
+            # Sanitize names (basic)
+            safe_table = table_name  # In real app, would need stricter sanitization
+            safe_cols = ", ".join([f'"{c}"' for c in columns])
+            
+            sql = f'CREATE INDEX IF NOT EXISTS "{index_name}" ON "{safe_table}" ({safe_cols})'
+            
+            # Execute raw SQL
+            # Note: Ibis backends might vary in how they expose raw execution
+            if hasattr(self.con, 'raw_sql'):
+                self.con.raw_sql(sql)
+            elif hasattr(self.con, 'execute'):
+                 self.con.execute(sql)
+            else:
+                print(f"Warning: Backend {type(self.con)} does not support raw SQL for indexing.")
+                
+        except Exception as e:
+            # Log but don't fail the operation - indexing is an optimization
+            print(f"Warning: Failed to create index {index_name} on {table_name}: {e}")
+
     def get_stats(self) -> Dict[str, Any]:
         """
         Get backend performance statistics.

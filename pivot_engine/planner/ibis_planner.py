@@ -461,10 +461,59 @@ class IbisPlanner:
             if cursor_filter_expr is not None:
                 filtered_table = filtered_table.filter(cursor_filter_expr)
 
-        base_measures = [m for m in spec.measures if not m.ratio_numerator]
+        # 1. Split measures into base (standard aggregations) and calculated (expressions)
+        base_measures = [m for m in spec.measures if not m.expression and not m.ratio_numerator]
+        # Ratio measures are just a special case of calculated measures, keep them separately for now
+        # or handle them as "legacy" calculated fields. Ideally, we treat them as calculated too if possible,
+        # but maintaining backward compatibility for now.
         ratio_measures = [m for m in spec.measures if m.ratio_numerator]
+        calculated_measures = [m for m in spec.measures if m.expression]
         
-        ibis_aggregations = [self._convert_measure_to_ibis(filtered_table, m) for m in base_measures]
+        # 2. Compute base aggregations
+        # Store a map of alias -> ibis_expression for resolution
+        alias_to_expr = {}
+        ibis_aggregations = []
+        
+        for m in base_measures:
+            expr = self._convert_measure_to_ibis(filtered_table, m)
+            ibis_aggregations.append(expr)
+            alias_to_expr[m.alias] = expr
+
+        # 3. Handle Ratio Measures (Legacy Support)
+        # Ratio measures are effectively calculated fields: num / den
+        for rm in ratio_measures:
+            if rm.ratio_numerator in alias_to_expr and rm.ratio_denominator in alias_to_expr:
+                num_expr = alias_to_expr[rm.ratio_numerator]
+                den_expr = alias_to_expr[rm.ratio_denominator]
+                # Avoid division by zero
+                # Ibis syntax for NULLIF/zero handling varies, simpler to rely on backend behavior or explicit check
+                # For safety: (num / nullif(den, 0))
+                ratio_expr = (num_expr / den_expr.nullif(0)).name(rm.alias)
+                ibis_aggregations.append(ratio_expr)
+                alias_to_expr[rm.alias] = ratio_expr
+
+        # 4. Handle Generic Calculated Fields
+        # Topological sort might be needed if calculated fields reference each other.
+        # For now, we assume simple one-level dependency on base/ratio measures or raw columns.
+        # Iterate multiple times to resolve dependencies if needed?
+        # Let's support referencing previously defined calculated measures by preserving order.
+        
+        for cm in calculated_measures:
+            if not cm.expression:
+                continue
+            
+            # Parse and build the expression
+            try:
+                calc_expr = self._parse_custom_expression(cm.expression, alias_to_expr, filtered_table)
+                calc_expr = calc_expr.name(cm.alias)
+                ibis_aggregations.append(calc_expr)
+                alias_to_expr[cm.alias] = calc_expr
+            except Exception as e:
+                print(f"Error compiling calculated measure '{cm.alias}': {e}")
+                # Fallback: maybe just return null? Or raise?
+                # Raising ensures the user knows their formula is bad.
+                raise ValueError(f"Invalid expression for measure '{cm.alias}': {e}")
+
         
         group_cols = list(spec.rows) + list(spec.columns)
         
@@ -485,8 +534,9 @@ class IbisPlanner:
         
         metadata = {
             "group_by": group_cols,
-            "agg_aliases": [m.alias for m in base_measures],
+            "agg_aliases": [m.alias for m in spec.measures], # All aliases
             "has_ratio_measures": len(ratio_measures) > 0,
+            "has_calculated_measures": len(calculated_measures) > 0,
             "ratio_measures": [{"alias": m.alias, "numerator": m.ratio_numerator, 
                                "denominator": m.ratio_denominator} for m in ratio_measures]
         }
@@ -506,6 +556,68 @@ class IbisPlanner:
             metadata["estimated_complexity"] = "medium"
             
         return {"queries": queries, "metadata": metadata}
+
+    def _parse_custom_expression(self, expression: str, alias_map: Dict[str, Any], table: IbisTable) -> Any:
+        """
+        Parses a user-defined string expression and returns an Ibis expression.
+        Supports basic arithmetic (+, -, *, /) and referencing other measure aliases.
+        
+        Args:
+            expression: The formula string, e.g., "sales - costs" or "(sales / revenue) * 100"
+            alias_map: Dictionary of available measure aliases -> Ibis expressions.
+            table: The source Ibis table (for referencing raw columns directly if needed, 
+                   though usually measures are preferred).
+        """
+        # Security: Do NOT use eval() directly on user input without strict sanitization.
+        # We will use a tokenizer to identify variables and operators.
+        
+        # 1. Identify all tokens that look like variables (alphanumeric + underscores)
+        # We assume aliases don't start with numbers.
+        import re
+        tokens = re.split(r'(\s+|[+\-*/()<>!=,])', expression)
+        
+        # 2. Rebuild the expression by substituting variables with Ibis objects
+        # Since we can't easily construct the Ibis expression via string manipulation + eval safely,
+        # we will use a simplified evaluation strategy:
+        # - Identify all valid variable names.
+        # - Ensure they exist in alias_map.
+        # - Use a limited scope eval() where the context ONLY contains the mapped Ibis expressions
+        #   and whitelisted functions/constants.
+        
+        safe_context = {}
+        
+        # Populate context with measure aliases
+        for name, expr in alias_map.items():
+            safe_context[name] = expr
+            
+        # Also allow raw columns if they are numeric? 
+        # For now, let's restrict to measures to enforce "aggregation first" logic
+        # unless it's a raw column that will be auto-aggregated (risky).
+        
+        # Check for unknown tokens
+        variable_pattern = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+        
+        for token in tokens:
+            token = token.strip()
+            if not token:
+                continue
+            if variable_pattern.match(token):
+                if token not in safe_context and token not in ('div', 'mul', 'add', 'sub'): # constants/functions
+                    # If it's a number, it's fine. If it's a known operator, fine.
+                    # If it's not in the map, it's an error.
+                    # WAIT: is it a keyword like 'sum'? 
+                    # We only support arithmetic on aliases for now.
+                    raise ValueError(f"Unknown field or alias '{token}' in expression. Only defined measures can be referenced.")
+
+        # 3. Evaluate safely
+        # We assume the user expression syntax is compatible with Python's operator syntax (which Ibis uses).
+        try:
+            # We trust the Ibis expression overrides for operators
+            result = eval(expression, {"__builtins__": None}, safe_context)
+            return result
+        except Exception as e:
+            raise ValueError(f"Failed to evaluate expression '{expression}': {e}")
+
 
     def _convert_cursor_to_ibis_filter(self, table: IbisTable, spec: PivotSpec) -> Optional[IbisExpr]:
         """Builds an Ibis WHERE clause for cursor-based pagination."""

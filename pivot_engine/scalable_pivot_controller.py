@@ -38,6 +38,52 @@ def sanitize_column_name(value: str) -> str:
     return sanitized[:63]
 
 
+class QueryStatsTracker:
+    """Tracks query performance to identify candidates for materialization"""
+    def __init__(self, threshold_count: int = 3, threshold_duration: float = 0.5):
+        self.stats = {}  # spec_hash -> {'count': int, 'total_time': float, 'last_run': float}
+        self.threshold_count = threshold_count
+        self.threshold_duration = threshold_duration
+        self.materialized_specs = set()
+
+    def record_query(self, spec: PivotSpec, duration: float) -> bool:
+        """
+        Record query execution statistics.
+        Returns True if the query should be materialized.
+        """
+        import hashlib
+        import json
+        
+        # Create a stable hash of the spec (ignoring limit/offset/cursor for aggregation pattern matching)
+        # We want to catch the "shape" of the query (grouping + filters)
+        spec_dict = spec.to_dict()
+        key_parts = {
+            'table': spec_dict.get('table'),
+            'rows': spec_dict.get('rows'),
+            'filters': str(sorted(spec_dict.get('filters', []), key=lambda x: str(x)))
+        }
+        spec_hash = hashlib.md5(json.dumps(key_parts, sort_keys=True).encode()).hexdigest()
+
+        if spec_hash in self.materialized_specs:
+            return False
+
+        if spec_hash not in self.stats:
+            self.stats[spec_hash] = {'count': 0, 'total_time': 0.0, 'last_run': 0}
+
+        entry = self.stats[spec_hash]
+        entry['count'] += 1
+        entry['total_time'] += duration
+        entry['last_run'] = time.time()
+
+        avg_time = entry['total_time'] / entry['count']
+
+        if entry['count'] >= self.threshold_count and avg_time >= self.threshold_duration:
+            self.materialized_specs.add(spec_hash)
+            return True
+        
+        return False
+
+
 class ScalablePivotController:
     """
     Scalable controller for pivot operations with advanced features for large datasets.
@@ -160,6 +206,8 @@ class ScalablePivotController:
         # CDC for real-time updates
         self.cdc_manager = None  # Will be set via setup_cdc method
         
+        self.stats_tracker = QueryStatsTracker()
+        
         self._request_count = 0
         self._cache_hits = 0
         self._cache_misses = 0
@@ -228,6 +276,8 @@ class ScalablePivotController:
         force_refresh: bool = False
     ) -> Union[Dict[str, Any], pa.Table]:
         """Execute a pivot query asynchronously with all scalability features"""
+        start_time = time.time()
+        
         self._request_count += 1
         spec = self._normalize_spec(spec)
         
@@ -240,12 +290,28 @@ class ScalablePivotController:
         else:
             result_table = await self._execute_standard_pivot_async(spec, plan_result, force_refresh)
 
+        # Smart Materialization Check
+        duration = time.time() - start_time
+        if self.stats_tracker.record_query(spec, duration):
+            # Trigger materialization in background (fire and forget)
+            asyncio.create_task(self._trigger_materialization(spec))
+
         # Final conversion
         if return_format == "dict":
             # cpu bound conversion
             return self._convert_table_to_dict(result_table, spec)
 
         return result_table
+
+    async def _trigger_materialization(self, spec: PivotSpec):
+        """Helper to run materialization in background"""
+        try:
+            loop = asyncio.get_running_loop()
+            # Offload to thread pool as Ibis materialization calls are synchronous
+            await loop.run_in_executor(None, self.materialized_hierarchy_manager.create_materialized_hierarchy, spec)
+            print(f"Smart materialization completed for table {spec.table}")
+        except Exception as e:
+            print(f"Smart materialization failed: {e}")
 
     async def _execute_standard_pivot_async(self, spec: Any, plan_result: Dict[str, Any], force_refresh: bool) -> pa.Table:
         """Execute standard pivot asynchronously"""
@@ -657,11 +723,14 @@ class ScalablePivotController:
         """Run batch loading of multiple levels of the hierarchy"""
         return self.tree_manager._load_multiple_levels_batch(spec, expanded_paths, max_levels)
 
-    def run_materialized_hierarchy(self, spec: PivotSpec):
-        """Run hierarchical pivot using materialized rollups"""
-        self.materialized_hierarchy_manager.create_materialized_hierarchy(spec)
-        # Return empty result as hierarchy is now materialized
-        return {"status": "materialized", "hierarchy_name": f"hierarchy_{spec.table}_{hash(str(spec.to_dict()))}"}
+    async def run_materialized_hierarchy(self, spec: PivotSpec):
+        """Run hierarchical pivot using materialized rollups (Async Job)"""
+        job_id = await self.materialized_hierarchy_manager.create_materialized_hierarchy_async(spec)
+        return {"status": "pending", "job_id": job_id, "message": "Materialization job started"}
+
+    def get_materialization_status(self, job_id: str) -> Dict[str, Any]:
+        """Get the status of a materialization job"""
+        return self.materialized_hierarchy_manager.get_job_status(job_id)
 
     async def run_intelligent_prefetch(self, spec: PivotSpec, user_session: Dict[str, Any], expanded_paths: List[List[str]]):
         """Run intelligent prefetching based on user behavior patterns"""

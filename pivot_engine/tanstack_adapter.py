@@ -133,13 +133,18 @@ class TanStackPivotAdapter:
         }
         return mapping.get(tanstack_op, '=')
     
-    def convert_pivot_result_to_tanstack_format(self, pivot_result: Dict[str, Any], 
+    def convert_pivot_result_to_tanstack_format(self, pivot_result: Any, 
                                                tanstack_request: TanStackRequest) -> TanStackResponse:
         """Convert pivot engine result to TanStack format"""
+        import pyarrow as pa
+        
         # Convert from pivot format to TanStack row format
         rows = []
         
-        if isinstance(pivot_result, dict) and 'rows' in pivot_result and 'columns' in pivot_result:
+        if isinstance(pivot_result, pa.Table):
+            # Optimized vectorised conversion using PyArrow
+            rows = pivot_result.to_pylist()
+        elif isinstance(pivot_result, dict) and 'rows' in pivot_result and 'columns' in pivot_result:
             # Dict format with columns and rows
             pivot_columns = pivot_result['columns']
             pivot_rows = pivot_result['rows']

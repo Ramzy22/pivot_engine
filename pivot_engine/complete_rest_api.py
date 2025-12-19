@@ -12,6 +12,8 @@ from pivot_engine.types.pivot_spec import PivotSpec
 from pivot_engine.config import get_config
 
 
+from pivot_engine.tanstack_adapter import TanStackPivotAdapter, TanStackRequest, TanStackOperation
+
 # Pydantic models for API requests/responses
 class PivotSpecRequest(BaseModel):
     """Pydantic model for pivot spec request"""
@@ -26,6 +28,19 @@ class PivotSpecRequest(BaseModel):
     having: Optional[List[Dict[str, Any]]] = None
     grouping_config: Optional[Dict[str, Any]] = None
     pivot_config: Optional[Dict[str, Any]] = None
+
+
+class TanStackRequestModel(BaseModel):
+    """Pydantic model for TanStack request"""
+    operation: str
+    table: str
+    columns: List[Dict[str, Any]]
+    filters: List[Dict[str, Any]] = []
+    sorting: List[Dict[str, Any]] = []
+    grouping: List[str] = []
+    aggregations: List[Dict[str, Any]] = []
+    pagination: Optional[Dict[str, Any]] = None
+    global_filter: Optional[str] = None
 
 
 class HierarchicalRequest(BaseModel):
@@ -68,6 +83,7 @@ class CompletePivotAPI:
     
     def __init__(self, controller: ScalablePivotController):
         self.controller = controller
+        self.tanstack_adapter = TanStackPivotAdapter(controller)
         self.app = FastAPI(title="Complete Scalable Pivot Engine API")
         self._setup_routes()
     
@@ -90,6 +106,32 @@ class CompletePivotAPI:
                 return APIResponse(
                     status="success",
                     data=result
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/pivot/tanstack")
+        async def tanstack_endpoint(request: TanStackRequestModel):
+            try:
+                # Convert Pydantic model to TanStackRequest dataclass
+                ts_request = TanStackRequest(
+                    operation=TanStackOperation(request.operation),
+                    table=request.table,
+                    columns=request.columns,
+                    filters=request.filters,
+                    sorting=request.sorting,
+                    grouping=request.grouping,
+                    aggregations=request.aggregations,
+                    pagination=request.pagination,
+                    global_filter=request.global_filter
+                )
+                
+                result = await self.tanstack_adapter.handle_request(ts_request)
+                
+                # Convert result object to dict/json compatible format
+                return APIResponse(
+                    status="success",
+                    data=result.__dict__
                 )
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
@@ -161,8 +203,20 @@ class CompletePivotAPI:
                 spec_dict = request.dict()
                 pivot_spec = PivotSpec.from_dict(spec_dict)
                 
-                result = self.controller.run_materialized_hierarchy(pivot_spec)
+                # Await the async method
+                result = await self.controller.run_materialized_hierarchy(pivot_spec)
                 
+                return APIResponse(
+                    status="success",
+                    data=result
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.get("/pivot/jobs/{job_id}")
+        async def job_status_endpoint(job_id: str):
+            try:
+                result = self.controller.get_materialization_status(job_id)
                 return APIResponse(
                     status="success",
                     data=result
