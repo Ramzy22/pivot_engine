@@ -9,7 +9,6 @@ import ibis
 from ibis.expr.api import Table as IbisTable
 
 from .tree import TreeExpansionManager
-from .planner.sql_planner import SQLPlanner
 from .planner.ibis_planner import IbisPlanner
 from .diff.diff_engine import QueryDiffEngine
 from .backends.duckdb_backend import DuckDBBackend
@@ -65,19 +64,17 @@ class PivotController:
         self.planner = planner
 
         if not self.planner:
-            if planner_name == "ibis":
-                try:
-                    # Use IbisBackend which handles connection details
-                    self.backend = IbisBackend(connection_uri=backend_uri)
-                    # Create IbisPlanner with the connection from the backend
-                    self.planner = IbisPlanner(con=self.backend.con)
-                except Exception as e:
-                    print(f"Could not connect to database backend via Ibis: {e}, falling back to SQLPlanner/DuckDB")
-                    self.backend = DuckDBBackend(uri=backend_uri)
-                    self.planner = SQLPlanner(dialect="duckdb")
-            else:
-                self.backend = DuckDBBackend(uri=backend_uri)
-                self.planner = SQLPlanner(dialect="duckdb")
+            # Always default to IbisPlanner
+            try:
+                # Use IbisBackend which handles connection details
+                self.backend = IbisBackend(connection_uri=backend_uri)
+                # Create IbisPlanner with the connection from the backend
+                self.planner = IbisPlanner(con=self.backend.con)
+            except Exception as e:
+                print(f"Could not connect to database backend via Ibis: {e}")
+                # Fallback to default in-memory DuckDB via IbisBackend
+                self.backend = IbisBackend(connection_uri="duckdb://:memory:")
+                self.planner = IbisPlanner(con=self.backend.con)
         else:
             # If planner is provided, try to infer backend or create a default one
             # This path assumes the caller manages the backend/planner relationship

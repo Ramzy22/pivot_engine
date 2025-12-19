@@ -19,6 +19,8 @@ class TableSnapshot:
     checksum: str # Using string for consistency with previous implementation
     timestamp: float
     sample_data: List[Dict[str, Any]]  # Contains sample records for change detection
+    max_id: Optional[int] = None
+    max_updated_at: Optional[float] = None
 
 
 class DatabaseChangeDetector:
@@ -57,20 +59,35 @@ class DatabaseChangeDetector:
         row_count = ibis_table.count().execute()
         
         # Get a simple checksum using row count for backend agnosticism.
-        # Note: Robust content hashing (e.g., MD5 of all rows) is backend-specific and expensive.
-        # Row count + Sample data is a lightweight proxy for detecting changes.
         checksum = str(row_count)
         
         # Get sample data
         sample_data_pyarrow = ibis_table.limit(5).to_pyarrow()
         sample_data = sample_data_pyarrow.to_pylist() if sample_data_pyarrow.num_rows > 0 else []
         
+        # Capture incremental markers if available
+        max_id = None
+        max_updated_at = None
+        
+        cols = ibis_table.columns
+        if 'id' in cols:
+            try:
+                max_id = ibis_table['id'].max().execute()
+            except: pass
+            
+        if 'updated_at' in cols:
+            try:
+                max_updated_at = ibis_table['updated_at'].max().execute()
+            except: pass
+        
         return TableSnapshot(
             table_name=table_name,
             row_count=row_count,
             checksum=checksum,
             timestamp=time.time(),
-            sample_data=sample_data
+            sample_data=sample_data,
+            max_id=max_id,
+            max_updated_at=max_updated_at
         )
     
     async def detect_changes(self, table_name: str) -> List[Change]:
@@ -110,20 +127,45 @@ class DatabaseChangeDetector:
     async def _detect_inserts(self, table_name: str, old_snapshot: TableSnapshot, new_snapshot: TableSnapshot) -> List[Change]:
         """Detect INSERT operations"""
         changes = []
+        ibis_table = self.backend.table(table_name)
         
-        # For simplicity, we'll report the difference in row count as individual INSERTs
-        # In a real system, we'd compare the actual data to identify specific new rows
-        num_inserts = new_snapshot.row_count - old_snapshot.row_count
+        # Try to fetch actual inserted rows using incremental keys
+        new_rows = []
         
-        # In a real implementation, get the actual inserted rows
-        # Here we'll simulate by returning placeholder changes
-        for _ in range(num_inserts):
-            # In a real system, we'd query for the actual new records
-            changes.append(Change(
-                table=table_name,
-                type='INSERT',
-                new_row={"_change_type": "detected_insert", "_timestamp": time.time()}
-            ))
+        if old_snapshot.max_id is not None and new_snapshot.max_id is not None:
+            if new_snapshot.max_id > old_snapshot.max_id:
+                try:
+                    new_rows_table = ibis_table.filter(ibis_table['id'] > old_snapshot.max_id).to_pyarrow()
+                    new_rows = new_rows_table.to_pylist()
+                except Exception as e:
+                    print(f"Error fetching incremental inserts by ID: {e}")
+                    
+        elif old_snapshot.max_updated_at is not None and new_snapshot.max_updated_at is not None:
+            if new_snapshot.max_updated_at > old_snapshot.max_updated_at:
+                try:
+                    new_rows_table = ibis_table.filter(ibis_table['updated_at'] > old_snapshot.max_updated_at).to_pyarrow()
+                    new_rows = new_rows_table.to_pylist()
+                except Exception as e:
+                    print(f"Error fetching incremental inserts by updated_at: {e}")
+
+        # If we successfully fetched real rows
+        if new_rows:
+            for row in new_rows:
+                changes.append(Change(
+                    table=table_name,
+                    type='INSERT',
+                    new_row=row
+                ))
+        else:
+            # Fallback: report the difference in row count as placeholder INSERTs
+            num_inserts = new_snapshot.row_count - old_snapshot.row_count
+            if num_inserts > 0:
+                for _ in range(num_inserts):
+                    changes.append(Change(
+                        table=table_name,
+                        type='INSERT',
+                        new_row={"_change_type": "detected_insert_placeholder", "_timestamp": time.time()}
+                    ))
         
         return changes
     

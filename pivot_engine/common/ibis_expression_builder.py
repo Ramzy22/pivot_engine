@@ -202,13 +202,25 @@ class IbisExpressionBuilder:
         elif agg_type == 'variance':
             return col.var().name(measure.alias)
         elif agg_type == 'median':
-             # Note: Backend support check should be handled by caller or backend-specific builder
-             # For now, we assume support if invoked
-            return col.quantile(0.5).name(measure.alias)
+            # Try exact median, then approximate, then quantile
+            try:
+                return col.median().name(measure.alias)
+            except (AttributeError, NotImplementedError):
+                try:
+                    return col.approx_median().name(measure.alias)
+                except (AttributeError, NotImplementedError):
+                     return col.quantile(0.5).name(measure.alias)
         elif agg_type == 'percentile':
             if measure.percentile is None:
                 raise ValueError("Percentile aggregation requires percentile parameter")
-            return col.quantile(float(measure.percentile)).name(measure.alias)
+            p = float(measure.percentile)
+            try:
+                return col.quantile(p).name(measure.alias)
+            except (AttributeError, NotImplementedError):
+                try:
+                    return col.approx_quantile(p).name(measure.alias)
+                except (AttributeError, NotImplementedError):
+                    raise ValueError(f"Percentile/Quantile not supported by backend for measure {measure.alias}")
         elif agg_type == 'string_agg':
             sep = measure.separator or ','
             return col.group_concat(sep).name(measure.alias)

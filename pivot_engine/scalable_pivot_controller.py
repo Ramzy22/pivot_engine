@@ -10,7 +10,6 @@ import ibis
 from ibis.expr.api import Table as IbisTable
 
 from .tree import TreeExpansionManager
-from .planner.sql_planner import SQLPlanner
 from .planner.ibis_planner import IbisPlanner
 from .diff.diff_engine import QueryDiffEngine
 from .backends.ibis_backend import IbisBackend
@@ -124,20 +123,23 @@ class ScalablePivotController:
         self.planner = planner
 
         if not self.planner:
-            if planner_name == "ibis":
-                try:
-                    # Use IbisBackend which handles connection details
-                    self.backend = IbisBackend(connection_uri=backend_uri)
-                    # Create IbisPlanner with the connection from the backend
-                    self.planner = IbisPlanner(con=self.backend.con)
-                except Exception as e:
-                    print(f"Could not connect to database backend via Ibis: {e}, falling back to SQLPlanner/DuckDB")
-                    # Fallback to local DuckDB for safety
-                    self.backend = DuckDBBackend(uri=backend_uri)
-                    self.planner = SQLPlanner(dialect="duckdb")
-            else:
-                self.backend = DuckDBBackend(uri=backend_uri)
-                self.planner = SQLPlanner(dialect="duckdb")
+            # Always default to IbisPlanner
+            try:
+                # Use IbisBackend which handles connection details
+                self.backend = IbisBackend(connection_uri=backend_uri)
+                # Create IbisPlanner with the connection from the backend
+                self.planner = IbisPlanner(con=self.backend.con)
+            except Exception as e:
+                # If IbisBackend fails, we can try to fallback to a basic DuckDB connection via Ibis?
+                # Or just raise error. The requirement is to be backend agnostic via Ibis.
+                # Falling back to SQLPlanner is no longer an option.
+                print(f"Could not connect to database backend via Ibis: {e}")
+                # We can try to initialize IbisBackend with a default duckdb
+                if backend_uri == ":memory:shared_pivot_db":
+                     self.backend = IbisBackend(connection_uri="duckdb://:memory:")
+                     self.planner = IbisPlanner(con=self.backend.con)
+                else:
+                     raise e
         else:
             # If planner is provided, try to infer backend or create a default one
             # This path assumes the caller manages the backend/planner relationship

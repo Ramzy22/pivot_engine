@@ -113,6 +113,73 @@ class MaterializedHierarchyManager:
         """Legacy synchronous method (keeps backward compatibility)."""
         self._create_materialized_hierarchy_sync(spec)
     
+    def find_best_rollup(self, spec: PivotSpec) -> Optional[str]:
+        """
+        Find the best materialized rollup table for the given query.
+        Looks for the most aggregated (smallest) rollup that satisfies:
+        1. Contains all grouping dimensions.
+        2. Contains all filter dimensions.
+        """
+        # 1. Identify all required dimensions (grouping + filtering)
+        # Note: We assume rollup levels are strictly prefixes of spec.rows defined during materialization.
+        # This only works if the query spec uses the same hierarchy definition as the materialization spec.
+        # We assume the table name identifies the hierarchy context.
+        
+        required_dims = set(spec.rows) # Grouping
+        if spec.columns:
+             # Standard rollups don't include column pivots usually, unless specified
+             # If columns are used, we can only use a rollup if it includes those columns as dimensions.
+             # Current create_materialized_hierarchy only uses spec.rows.
+             # So if spec.columns is not empty, we likely can't use these rollups.
+             return None
+
+        # Check filters
+        for f in spec.filters:
+            field = f.get('field')
+            if field:
+                required_dims.add(field)
+        
+        # We need to find a level L such that spec.rows[:L] contains all required_dims.
+        # Since spec.rows is ordered, we find the max index of any required dimension in spec.rows.
+        
+        max_idx = -1
+        for dim in required_dims:
+            try:
+                idx = spec.rows.index(dim)
+                max_idx = max(max_idx, idx)
+            except ValueError:
+                # A required dimension (e.g. from filter) is NOT in the hierarchy.
+                # We cannot use the rollup because the rollup only contains hierarchy columns.
+                return None
+        
+        # The required level is max_idx + 1 (1-based)
+        min_level = max_idx + 1
+        
+        # We prefer the smallest table, which is the most aggregated one.
+        # In a hierarchy, Level 1 is most aggregated, Level N is least.
+        # So we want the smallest Level L >= min_level.
+        # Wait, Level 1 (Region) has fewer rows than Level 2 (Region, State).
+        # We want the *lowest* level number that satisfies the requirement.
+        # Because Level 1 < Level 2 in size.
+        
+        target_level = min_level
+        if target_level < 1:
+            target_level = 1
+            
+        # Check if this level or any deeper level exists
+        # We iterate from target_level upwards (deeper) until we find one.
+        # Actually, we want the *first* one we find because it's the most aggregated one that suffices.
+        # But wait, does 'create_materialized_hierarchy' guarantee existence?
+        # We check `self.rollup_tables`.
+        
+        # We don't know the max level, but practical limits apply (e.g. 10).
+        for level in range(target_level, 20):
+            table = self.rollup_tables.get(f"{spec.table}:{level}")
+            if table:
+                return table
+                
+        return None
+
     def get_rollup_table_name(self, spec: PivotSpec, level: int) -> Optional[str]:
         """Get the name of the rollup table for a given level."""
         return self.rollup_tables.get(f"{spec.table}:{level}")

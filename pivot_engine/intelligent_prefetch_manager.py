@@ -130,41 +130,66 @@ class IntelligentPrefetchManager:
             if filter_expr is not None:
                 query = query.filter(filter_expr)
             
-            # Select parent dims and target dim to reconstruct relationship
-            selection = parent_dims + [target_dim]
-            query = query.select(selection).distinct()
-            
-            # We want limit PER parent. Standard SQL doesn't support LIMIT PER GROUP easily without window functions.
-            # Window function: rank() over (partition by parent_dims order by target_dim) <= limit
-            # If backend supports window functions
-            
-            # Try window function if possible, else global limit (suboptimal but safe) or just fetch more
-            # For now, let's try a reasonable global limit to avoid explosion, assuming 'limit_per_parent' * num_paths
-            global_limit = limit_per_parent * len(parent_paths) * 2 # Safety factor
-            query = query.limit(global_limit)
-            
-            # Execute
-            if hasattr(self.backend, 'execute'):
-                 result = query.execute()
-            else:
-                 # If backend is just the connection object (e.g. duckdb con)
-                 # self.backend might be Ibis connection which has .execute() on expression but not on itself?
-                 # Wait, self.backend passed in __init__ is 'con'.
-                 # So query.execute() should work if query is an Ibis expression.
-                 result = query.execute()
-            
-            # Process result to list of (parent_tuple, child_val)
-            output = []
-            # result is a pandas DataFrame or similar
-            if hasattr(result, 'to_dict'):
-                 records = result.to_dict('records')
-                 for row in records:
-                     # Reconstruct parent path
-                     p_path = tuple(row[d] for d in parent_dims)
-                     child = row[target_dim]
-                     output.append((p_path, child))
-            
-            return output
+            # Precise Top-N per group using Window Functions
+            # This avoids the over-fetching/under-fetching of global limits
+            try:
+                # 1. Project necessary columns first to simplify
+                selection = parent_dims + [target_dim]
+                # We need distinct values first to avoid counting duplicates (children) 
+                # effectively distinct children per parent
+                distinct_query = query.select(selection).distinct()
+                
+                # 2. Apply Window Function to rank children within each parent group
+                # Order by target_dim (alphabetical/numeric) for deterministic results
+                # In future, we could order by a metric (e.g. Sales) if passed
+                w = ibis.window(group_by=parent_dims, order_by=ibis.asc(target_dim))
+                
+                # ibis.row_number() is standard
+                ranked = distinct_query.mutate(rn=ibis.row_number().over(w))
+                
+                # 3. Filter top-N
+                filtered_ranked = ranked.filter(ranked.rn <= limit_per_parent)
+                
+                # 4. Final selection
+                final_query = filtered_ranked.select(selection)
+                
+                # Execute
+                if hasattr(self.backend, 'execute'):
+                     result = final_query.execute()
+                else:
+                     result = final_query.execute()
+                
+                # Process result to list of (parent_tuple, child_val)
+                output = []
+                if hasattr(result, 'to_dict'):
+                     records = result.to_dict('records')
+                     for row in records:
+                         # Reconstruct parent path
+                         p_path = tuple(row[d] for d in parent_dims)
+                         child = row[target_dim]
+                         output.append((p_path, child))
+                
+                return output
+
+            except Exception as e:
+                print(f"Window function prefetch failed (fallback to global limit): {e}")
+                # Fallback to simple query with global limit if window functions fail (e.g. backend support)
+                selection = parent_dims + [target_dim]
+                fallback_query = query.select(selection).distinct().limit(limit_per_parent * len(parent_paths) * 2)
+                
+                if hasattr(self.backend, 'execute'):
+                     result = fallback_query.execute()
+                else:
+                     result = fallback_query.execute()
+                     
+                output = []
+                if hasattr(result, 'to_dict'):
+                     records = result.to_dict('records')
+                     for row in records:
+                         p_path = tuple(row[d] for d in parent_dims)
+                         child = row[target_dim]
+                         output.append((p_path, child))
+                return output
 
         except Exception as e:
             print(f"Batch prefetch query failed: {e}")

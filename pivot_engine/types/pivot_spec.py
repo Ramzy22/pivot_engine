@@ -49,6 +49,7 @@ class PivotConfig:
     order_by_measure: Optional[str] = None
     include_totals_column: bool = False
     null_column_label: str = "(null)"
+    column_cursor: Optional[str] = None  # Keyset cursor for horizontal scrolling
 
 @dataclass
 class DrillPath:

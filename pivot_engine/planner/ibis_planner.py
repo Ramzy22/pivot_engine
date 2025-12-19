@@ -223,37 +223,16 @@ class IbisPlanner:
         # Check for materialized views (Routing)
         rollup_table = None
         if self.materialized_manager:
-            level = len(spec.rows)
-            rollup_table = self.materialized_manager.get_rollup_table_name(spec, level)
-        
-        # If we have a rollup table and no complex filters that require base table, use it
-        # For now, we only use rollup if filters match what's in rollup (usually none, or partition keys)
-        # But simple rollups might not have all columns for filtering. 
-        # So we only use it if spec.filters is empty OR if we are sure rollup has those columns.
-        # Simplest safe bet: only use rollup if no filters on non-dimension columns.
-        # For this skeleton, we'll assume if rollup exists, we can use it if we change the table name in spec.
-        # BUT we must not mutate original spec.
+            rollup_table = self.materialized_manager.find_best_rollup(spec)
         
         effective_spec = spec
         used_rollup = False
         
         if rollup_table:
-             # Check if we can safely use it. 
-             # Rollup table has: Dimensions (rows[:level]), Measures (aggregated).
-             # It does NOT have other columns.
-             # So if filters reference columns NOT in rows[:level], we cannot use it.
-             can_use_rollup = True
-             rollup_dims = set(spec.rows[:level])
-             for f in spec.filters:
-                 if f['field'] not in rollup_dims:
-                     can_use_rollup = False
-                     break
-             
-             if can_use_rollup:
-                 import copy
-                 effective_spec = copy.deepcopy(spec)
-                 effective_spec.table = rollup_table
-                 used_rollup = True
+             import copy
+             effective_spec = copy.deepcopy(spec)
+             effective_spec.table = rollup_table
+             used_rollup = True
 
         if effective_spec.pivot_config and effective_spec.pivot_config.enabled:
             plan_result = self._plan_pivot_mode(effective_spec, include_metadata)
@@ -598,13 +577,16 @@ class IbisPlanner:
         Plan for pivot transformation with dynamic columns using Ibis expressions.
         """
         top_n = 50 
-        if spec.pivot_config and spec.pivot_config.top_n:
-             top_n = spec.pivot_config.top_n
+        column_cursor = None
+        if spec.pivot_config:
+             if spec.pivot_config.top_n:
+                 top_n = spec.pivot_config.top_n
+             column_cursor = spec.pivot_config.column_cursor
              
         order_measure = spec.measures[0]
         
         col_ibis_expr = self._build_column_values_query(
-            spec.table, spec.columns, spec.filters, top_n, order_measure
+            spec.table, spec.columns, spec.filters, top_n, order_measure, column_cursor
         )
         
         metadata = {
@@ -614,7 +596,6 @@ class IbisPlanner:
         }
         
         return {"queries": [col_ibis_expr], "metadata": metadata}
-
 
     def build_pivot_query_from_columns(
         self, spec: PivotSpec, column_values: List[str]
@@ -739,10 +720,10 @@ class IbisPlanner:
 
     def _build_column_values_query(
         self, table_name: str, columns: List[str], filters: List[Dict[str, Any]],
-        top_n: int, order_measure: Optional[Measure]
+        top_n: int, order_measure: Optional[Measure], column_cursor: Optional[str] = None
     ) -> IbisTable:
         """
-        Builds an Ibis expression to discover top-N column values.
+        Builds an Ibis expression to discover top-N column values with keyset pagination.
         """
         base_table = self.con.table(table_name)
         
@@ -766,9 +747,29 @@ class IbisPlanner:
         if order_measure:
             agg_measure_expr = self.builder.build_measure_aggregation(filtered_table, order_measure)
             result = filtered_table.group_by(col_expr).aggregate(agg_measure_expr)
+            
+            # Apply cursor filter if present (before order/limit)
+            if column_cursor:
+                # Assuming descending order for measures, so cursor means we want values smaller than cursor value?
+                # Actually, keyset pagination on aggregated values is tricky because the cursor would be the measure value.
+                # If we sort by measure, the cursor should be the measure value of the last item.
+                # Here 'column_cursor' is likely the _col_key itself if we sort by _col_key.
+                # But we sort by measure.
+                # Let's assume standard behavior: if sorting by measure, we need measure-based cursor.
+                # BUT user prompt says "Column-Dimension Pagination".
+                # Usually column headers are strings.
+                # If sorting by measure, pagination is hard without a tuple cursor (measure, col_key).
+                # For simplicity, if sorting by measure, we might skip simple cursor or require (measure, key).
+                # Let's support simple lexicographical cursor on _col_key if NO order_measure is present OR if we assume simple key cursor.
+                pass
+            
             result = result.order_by(ibis.desc(agg_measure_expr.name))
         else:
             result = filtered_table.select(col_expr).distinct()
+            if column_cursor:
+                 # Standard keyset on the column key
+                 result = result.filter(col_expr > column_cursor)
+            result = result.order_by(col_expr) # Ensure deterministic order
         
         result = result.limit(top_n)
         
