@@ -108,7 +108,7 @@ class TanStackPivotAdapter:
         return PivotSpec(
             table=request.table,
             rows=hierarchy_cols,
-            columns=[],  # TanStack handles column pivoting differently
+            columns=value_cols,  # Map non-grouped dimensions to column pivots
             measures=measures,
             filters=pivot_filters,
             sort=pivot_sort,
@@ -235,8 +235,31 @@ class TanStackPivotAdapter:
     
     def get_schema_info(self, table_name: str) -> Dict[str, Any]:
         """Get schema information for TanStack column configuration"""
-        # This would query the database schema
-        # For now, return mock schema based on the controller's data
+        # Try to use backend's schema discovery first
+        try:
+            if hasattr(self.controller, 'backend') and hasattr(self.controller.backend, 'get_schema'):
+                schema = self.controller.backend.get_schema(table_name)
+                if schema:
+                    columns_info = []
+                    for col_name, col_type in schema.items():
+                        columns_info.append({
+                            'id': col_name,
+                            'header': col_name.replace('_', ' ').title(),
+                            'accessorKey': col_name,
+                            'type': col_type,
+                            'enableSorting': True,
+                            'enableFiltering': True
+                        })
+                    
+                    return {
+                        'table': table_name,
+                        'columns': columns_info,
+                        'sample_data': [] # Fetching sample data could be separate if needed
+                    }
+        except Exception as e:
+            print(f"Metadata schema retrieval failed: {e}")
+
+        # Fallback: return mock schema based on the controller's data via sample query
         try:
             # Run a simple query to get column info
             spec = PivotSpec(

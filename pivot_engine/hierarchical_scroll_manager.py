@@ -109,14 +109,22 @@ class HierarchicalVirtualScrollManager:
                 rollup_table = con.table(rollup_table_name)
 
                 # Apply filters for the path
-                filter_expr = None
+                path_filters = []
                 for i, val in enumerate(path):
                     dim_name = all_dims[i]
-                    condition = (rollup_table[dim_name] == val)
-                    if filter_expr is None:
-                        filter_expr = condition
-                    else:
-                        filter_expr &= condition
+                    path_filters.append({"field": dim_name, "op": "=", "value": val})
+                
+                if hasattr(self.planner, 'builder'):
+                    filter_expr = self.planner.builder.build_filter_expression(rollup_table, path_filters)
+                else:
+                    # Fallback if builder is not available (e.g. older IbisPlanner version or different planner)
+                    filter_expr = None
+                    for f in path_filters:
+                        condition = (rollup_table[f['field']] == f['value'])
+                        if filter_expr is None:
+                            filter_expr = condition
+                        else:
+                            filter_expr &= condition
 
                 if filter_expr is not None:
                     rollup_table = rollup_table.filter(filter_expr)

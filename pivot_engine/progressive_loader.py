@@ -8,6 +8,7 @@ import ibis
 from ibis import BaseBackend as IbisBaseBackend
 from ibis.expr.api import Table as IbisTable, Expr
 from pivot_engine.types.pivot_spec import PivotSpec
+from pivot_engine.common.ibis_expression_builder import IbisExpressionBuilder
 
 
 class ProgressiveDataLoader:
@@ -17,6 +18,7 @@ class ProgressiveDataLoader:
         self.event_bus = event_bus
         self.default_chunk_size = 1000
         self.min_chunk_size = 100
+        self.builder = IbisExpressionBuilder(backend)
         
     async def load_progressive_chunks(self, spec: PivotSpec, chunk_callback: Optional[Callable] = None):
         """Load data in chunks for progressive rendering"""
@@ -26,10 +28,18 @@ class ProgressiveDataLoader:
         
         offset = 0
         chunk_number = 0
+        current_cursor = spec.cursor # Start with spec cursor if any
+        use_keyset = bool(spec.sort)
         
         while True:
             # Fetch chunk
-            chunk_ibis_expr = self._build_chunk_ibis_expression(spec, offset, chunk_size)
+            if use_keyset:
+                # Use keyset pagination if sorting is enabled
+                chunk_ibis_expr = self._build_chunk_ibis_expression(spec, offset=None, chunk_size=chunk_size, cursor=current_cursor)
+            else:
+                # Fallback to OFFSET
+                chunk_ibis_expr = self._build_chunk_ibis_expression(spec, offset=offset, chunk_size=chunk_size, cursor=None)
+            
             chunk_data = await chunk_ibis_expr.to_pyarrow() # Execute Ibis expression
             
             if chunk_data.num_rows == 0:
@@ -48,14 +58,39 @@ class ProgressiveDataLoader:
             if chunk_callback:
                 await chunk_callback(chunk_info)
             
-            offset += chunk_size
+            offset += chunk_size # Keep tracking approximate offset for progress
             chunk_number += 1
             
             if chunk_data.num_rows < chunk_size:
                 # Last chunk
                 break
+                
+            # Update cursor for next chunk
+            if use_keyset:
+                current_cursor = self._extract_cursor(chunk_data, spec.sort)
         
         return {'total_chunks': chunk_number, 'total_rows': offset}
+
+    def _extract_cursor(self, chunk_data: pa.Table, sort_spec: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Extract the cursor (last row values) for the sort fields"""
+        if not chunk_data or chunk_data.num_rows == 0:
+            return None
+        
+        # Get the last row
+        last_row_idx = chunk_data.num_rows - 1
+        cursor = {}
+        
+        sort_list = sort_spec if isinstance(sort_spec, list) else [sort_spec]
+        
+        for s in sort_list:
+            field = s.get('field')
+            if field in chunk_data.column_names:
+                # Extract value safely
+                col = chunk_data.column(field)
+                val = col[last_row_idx].as_py()
+                cursor[field] = val
+                
+        return cursor
     
     async def load_hierarchical_progressive(self, spec: PivotSpec, expanded_paths: List[List[str]], level_callback: Optional[Callable] = None):
         """Load hierarchical data progressively by levels"""
@@ -108,7 +143,7 @@ class ProgressiveDataLoader:
         # Apply filters
         filtered_table = ibis_table
         if spec.filters:
-            filter_expr = self._build_ibis_filter_expression(ibis_table, spec.filters)
+            filter_expr = self.builder.build_filter_expression(ibis_table, spec.filters)
             if filter_expr is not None:
                 filtered_table = filtered_table.filter(filter_expr)
         
@@ -116,22 +151,36 @@ class ProgressiveDataLoader:
         row_count = await filtered_table.count().execute()
         return row_count
     
-    def _build_chunk_ibis_expression(self, spec: PivotSpec, offset: int, chunk_size: int) -> IbisTable:
+    def _build_chunk_ibis_expression(self, spec: PivotSpec, offset: Optional[int], chunk_size: int, cursor: Optional[Dict[str, Any]] = None) -> IbisTable:
         """Build Ibis expression for a specific chunk."""
         base_table = self.backend.table(spec.table)
 
         # Apply filters
         filtered_table = base_table
         if spec.filters:
-            filter_expr = self._build_ibis_filter_expression(base_table, spec.filters)
+            filter_expr = self.builder.build_filter_expression(base_table, spec.filters)
             if filter_expr is not None:
                 filtered_table = filtered_table.filter(filter_expr)
+
+        # Apply Cursor Filter (Keyset Pagination) if provided
+        # We construct a synthetic spec with the current cursor to use the builder
+        if cursor and spec.sort:
+            # Shallow copy spec to inject cursor without modifying original
+            # Note: PivotSpec is a class, we just need an object with 'cursor' and 'sort'
+            # Or we can modify the builder method signature.
+            # Ideally we pass a spec-like object.
+            import copy
+            cursor_spec = copy.copy(spec)
+            cursor_spec.cursor = cursor
+            
+            cursor_filter = self.builder.build_cursor_filter_expression(filtered_table, cursor_spec)
+            if cursor_filter is not None:
+                filtered_table = filtered_table.filter(cursor_filter)
 
         # Define aggregations in Ibis
         aggregations = []
         for m in spec.measures:
-            agg_func = getattr(filtered_table[m.field], m.agg)
-            aggregations.append(agg_func().name(m.alias))
+            aggregations.append(self.builder.build_measure_aggregation(filtered_table, m))
 
         # Apply grouping
         grouped_table = filtered_table
@@ -141,12 +190,22 @@ class ProgressiveDataLoader:
         # Apply aggregation
         agg_expr = grouped_table.aggregate(aggregations)
 
-        # Apply ordering for stable pagination (use grouping columns by default)
-        order_cols = spec.rows or [agg_expr.columns[0]] # Order by first grouping col or first agg col
-        agg_expr = agg_expr.order_by([ibis.asc(col) for col in order_cols])
+        # Apply ordering
+        if spec.sort:
+            ibis_sorts = self.builder.build_sort_expressions(agg_expr, spec.sort)
+            if ibis_sorts:
+                agg_expr = agg_expr.order_by(ibis_sorts)
+        else:
+             # Default order for stable pagination
+             order_cols = spec.rows or [agg_expr.columns[0]]
+             agg_expr = agg_expr.order_by([ibis.asc(col) for col in order_cols])
 
         # Apply LIMIT and OFFSET
-        agg_expr = agg_expr.limit(chunk_size, offset=offset)
+        # If cursor is used, offset should be 0 (or None)
+        if offset is not None and offset > 0:
+            agg_expr = agg_expr.limit(chunk_size, offset=offset)
+        else:
+            agg_expr = agg_expr.limit(chunk_size)
         
         return agg_expr
     
@@ -169,15 +228,14 @@ class ProgressiveDataLoader:
         
         filtered_table = base_table
         if all_filters_dicts:
-            filter_expr = self._build_ibis_filter_expression(base_table, all_filters_dicts)
+            filter_expr = self.builder.build_filter_expression(base_table, all_filters_dicts)
             if filter_expr is not None:
                 filtered_table = filtered_table.filter(filter_expr)
 
         # Define aggregations in Ibis
         aggregations = []
         for measure in base_spec.measures:
-            agg_func = getattr(filtered_table[measure.field], measure.agg)
-            aggregations.append(agg_func().name(measure.alias))
+            aggregations.append(self.builder.build_measure_aggregation(filtered_table, measure))
 
         # Build the grouped and aggregated expression
         agg_expr = filtered_table.group_by(current_dimension).aggregate(aggregations)
@@ -190,64 +248,4 @@ class ProgressiveDataLoader:
         
         return agg_expr
     
-    def _build_ibis_filter_expression(self, table: IbisTable, filters: List[Dict[str, Any]]) -> Optional[Expr]:
-        """Builds an Ibis filter expression from a list of filter dictionaries."""
-        ibis_filters = []
-        for f in filters:
-            field = f.get("field")
-            op = f.get("op", "=")
-            value = f.get("value")
-
-            if field not in table.columns:
-                print(f"Warning: Filter field '{field}' not found in table during Ibis filter conversion.")
-                continue
-            
-            col = table[field]
-            
-            if op in ["=", "=="]:
-                ibis_filters.append(col == value)
-            elif op == "!=":
-                ibis_filters.append(col != value)
-            elif op == "<":
-                ibis_filters.append(col < value)
-            elif op == "<=":
-                ibis_filters.append(col <= value)
-            elif op == ">":
-                ibis_filters.append(col > value)
-            elif op == ">=":
-                ibis_filters.append(col >= value)
-            elif op == "in":
-                if isinstance(value, list):
-                    ibis_filters.append(col.isin(value))
-                else:
-                    print(f"Warning: Filter op '{op}' requires a list/tuple/set value for field '{field}'.")
-            elif op == "between":
-                if isinstance(value, (list, tuple)) and len(value) == 2:
-                    ibis_filters.append(col.between(value[0], value[1]))
-                else:
-                    print(f"Warning: Filter op '{op}' requires a two-element list/tuple value for field '{field}'.")
-            elif op == "like":
-                ibis_filters.append(col.like(value))
-            elif op == "ilike":
-                ibis_filters.append(col.ilike(value))
-            elif op == "is null":
-                ibis_filters.append(col.isnull())
-            elif op == "is not null":
-                ibis_filters.append(col.notnull())
-            elif op == "starts_with":
-                ibis_filters.append(col.like(f"{value}%"))
-            elif op == "ends_with":
-                ibis_filters.append(col.like(f"%{value}"))
-            elif op == "contains":
-                ibis_filters.append(col.like(f"%{value}%"))
-            else:
-                print(f"Warning: Unsupported filter operator '{op}' for field '{field}'.")
-
-        if not ibis_filters:
-            return None
-        
-        # Combine all filters with AND
-        combined_filter = ibis_filters[0]
-        for f_expr in ibis_filters[1:]:
-            combined_filter &= f_expr
-        return combined_filter
+    # _build_ibis_filter_expression removed as it is replaced by builder.build_filter_expression

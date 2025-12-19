@@ -294,6 +294,22 @@ class IbisBackend:
             # Log but don't fail the operation - indexing is an optimization
             print(f"Warning: Failed to create index {index_name} on {table_name}: {e}")
 
+    def get_schema(self, table_name: str) -> Dict[str, str]:
+        """
+        Get schema information for a table.
+        Returns a dictionary of column names to types.
+        """
+        if self.con is None:
+            raise ValueError("Backend not connected")
+        
+        try:
+            table = self.con.table(table_name)
+            schema = table.schema()
+            return {name: str(dtype) for name, dtype in schema.items()}
+        except Exception as e:
+            print(f"Error getting schema for {table_name}: {e}")
+            return {}
+
     def get_stats(self) -> Dict[str, Any]:
         """
         Get backend performance statistics.

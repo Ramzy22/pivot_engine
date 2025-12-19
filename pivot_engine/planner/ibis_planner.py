@@ -17,6 +17,9 @@ except ImportError:
     from ibis.expr.api import Expr as IbisExpr
 
 from pivot_engine.types.pivot_spec import PivotSpec, Measure, GroupingConfig, PivotConfig, DrillPath
+from pivot_engine.common.ibis_expression_builder import IbisExpressionBuilder
+# Import MaterializedHierarchyManager type for type hinting if needed (avoid circular import if possible)
+# from pivot_engine.materialized_hierarchy_manager import MaterializedHierarchyManager 
 
 @dataclass
 class QueryPlan:
@@ -99,13 +102,17 @@ class IbisPlanner:
     - Multi-dimensional hierarchical tiles
     - Advanced planning with cost estimation and optimization
     - Database-agnostic fallbacks
+    - Unified expression building via IbisExpressionBuilder
+    - Materialized View Routing
     """
 
-    def __init__(self, con: Optional[Any] = None, enable_optimization: bool = True):
+    def __init__(self, con: Optional[Any] = None, enable_optimization: bool = True, materialized_manager: Optional[Any] = None):
         self.con = con
         self.enable_optimization = enable_optimization
+        self.materialized_manager = materialized_manager
         self.cost_estimator = CostEstimator()
         self.query_rewriter = QueryRewriter()
+        self.builder = IbisExpressionBuilder(con)
 
         # Detect the backend database type for feature compatibility
         self._database_type = self._detect_database_type()
@@ -213,22 +220,60 @@ class IbisPlanner:
         """
         self._validate_spec(spec)
 
-        if spec.pivot_config and spec.pivot_config.enabled:
-            plan_result = self._plan_pivot_mode(spec, include_metadata)
-        elif spec.grouping_config and spec.grouping_config.mode != "standard":
-            plan_result = self._plan_grouping_sets(spec, include_metadata)
-        elif spec.drill_paths:
-            plan_result = self._plan_hierarchical_drill(spec, include_metadata)
+        # Check for materialized views (Routing)
+        rollup_table = None
+        if self.materialized_manager:
+            level = len(spec.rows)
+            rollup_table = self.materialized_manager.get_rollup_table_name(spec, level)
+        
+        # If we have a rollup table and no complex filters that require base table, use it
+        # For now, we only use rollup if filters match what's in rollup (usually none, or partition keys)
+        # But simple rollups might not have all columns for filtering. 
+        # So we only use it if spec.filters is empty OR if we are sure rollup has those columns.
+        # Simplest safe bet: only use rollup if no filters on non-dimension columns.
+        # For this skeleton, we'll assume if rollup exists, we can use it if we change the table name in spec.
+        # BUT we must not mutate original spec.
+        
+        effective_spec = spec
+        used_rollup = False
+        
+        if rollup_table:
+             # Check if we can safely use it. 
+             # Rollup table has: Dimensions (rows[:level]), Measures (aggregated).
+             # It does NOT have other columns.
+             # So if filters reference columns NOT in rows[:level], we cannot use it.
+             can_use_rollup = True
+             rollup_dims = set(spec.rows[:level])
+             for f in spec.filters:
+                 if f['field'] not in rollup_dims:
+                     can_use_rollup = False
+                     break
+             
+             if can_use_rollup:
+                 import copy
+                 effective_spec = copy.deepcopy(spec)
+                 effective_spec.table = rollup_table
+                 used_rollup = True
+
+        if effective_spec.pivot_config and effective_spec.pivot_config.enabled:
+            plan_result = self._plan_pivot_mode(effective_spec, include_metadata)
+        elif effective_spec.grouping_config and effective_spec.grouping_config.mode != "standard":
+            plan_result = self._plan_grouping_sets(effective_spec, include_metadata)
+        elif effective_spec.drill_paths:
+            plan_result = self._plan_hierarchical_drill(effective_spec, include_metadata)
         else:
-            plan_result = self._plan_standard(spec, columns_top_n, columns_order_by_measure, include_metadata)
+            plan_result = self._plan_standard(effective_spec, columns_top_n, columns_order_by_measure, include_metadata)
 
         if self.enable_optimization and optimize:
-            plan_result = self._apply_advanced_planning(plan_result, spec)
+            plan_result = self._apply_advanced_planning(plan_result, effective_spec)
         else:
             if "metadata" not in plan_result:
                 plan_result["metadata"] = {}
             plan_result["metadata"]["optimization_enabled"] = False
             plan_result["metadata"]["advanced_planning_applied"] = False
+
+        if used_rollup:
+            plan_result["metadata"]["used_materialized_view"] = rollup_table
 
         return plan_result
 
@@ -286,161 +331,10 @@ class IbisPlanner:
             has_joins
         )
 
-    def _convert_filter_to_ibis(self, table: IbisTable, filters: List[Dict[str, Any]]) -> Optional[IbisExpr]:
-        """Converts a list of filter dictionaries into an Ibis boolean expression."""
-        if not filters:
-            return None
-
-        ibis_filters = []
-        for f in filters:
-            field = f.get("field")
-            op = (f.get("op") or "=").lower()
-            value = f.get("value")
-
-            if field not in table.columns:
-                print(f"Warning: Filter field '{field}' not found in table during Ibis filter conversion.")
-                continue
-            
-            col = table[field]
-            
-            if op in ["=", "=="]:
-                ibis_filters.append(col == value)
-            elif op == "!=":
-                ibis_filters.append(col != value)
-            elif op == "<":
-                ibis_filters.append(col < value)
-            elif op == "<=":
-                ibis_filters.append(col <= value)
-            elif op == ">":
-                ibis_filters.append(col > value)
-            elif op == ">=":
-                ibis_filters.append(col >= value)
-            elif op == "in":
-                if isinstance(value, (list, tuple, set)):
-                    ibis_filters.append(col.isin(value))
-                else:
-                    # Treat single value 'in' as equality
-                    ibis_filters.append(col == value)
-            elif op == "between":
-                if isinstance(value, (list, tuple)) and len(value) == 2:
-                    ibis_filters.append(col.between(value[0], value[1]))
-            elif op == "like":
-                ibis_filters.append(col.like(value))
-            elif op == "ilike":
-                ibis_filters.append(col.ilike(value))
-            elif op == "is null":
-                ibis_filters.append(col.isnull())
-            elif op == "is not null":
-                ibis_filters.append(col.notnull())
-            elif op == "starts_with":
-                ibis_filters.append(col.like(f"{value}%"))
-            elif op == "ends_with":
-                ibis_filters.append(col.like(f"%{value}"))
-            elif op == "contains":
-                ibis_filters.append(col.like(f"%{value}%"))
-
-        if not ibis_filters:
-            return None
-        
-        combined_filter = ibis_filters[0]
-        for f_expr in ibis_filters[1:]:
-            combined_filter &= f_expr
-        return combined_filter
-
-    def _convert_sort_to_ibis(self, table: IbisTable, sort_specs: Union[Dict[str, Any], List[Dict[str, Any]]]) -> List[Union[IbisColumn, IbisExpr]]:
-        """Converts sort specifications to a list of Ibis sort expressions."""
-        if not sort_specs:
-            return []
-        
-        sort_list = [sort_specs] if isinstance(sort_specs, dict) else sort_specs
-        ibis_sorts = []
-
-        for s in sort_list:
-            field = s.get("field")
-            if not field or field not in table.columns:
-                continue
-
-            order = (s.get("order") or "asc").lower()
-            nulls = (s.get("nulls") or "").lower()
-
-            col = table[field]
-            sort_expr = None
-
-            if order == 'asc':
-                sort_expr = col.asc
-            elif order == 'desc':
-                sort_expr = col.desc
-            
-            if sort_expr:
-                if nulls == 'first':
-                    ibis_sorts.append(sort_expr(nulls_first=True))
-                elif nulls == 'last':
-                    ibis_sorts.append(sort_expr(nulls_last=True))
-                else:
-                    ibis_sorts.append(sort_expr())
-
-        return ibis_sorts
-
-    def _convert_measure_to_ibis(self, table: IbisTable, measure: Measure) -> IbisScalar:
-        """Converts a Measure object into an Ibis aggregation expression."""
-        if not measure.alias:
-            raise ValueError("Measure must include an alias")
-        
-        col = table[measure.field] if measure.field else None
-        agg_type = (measure.agg or "sum").strip().lower()
-
-        if measure.expression:
-            raise ValueError(f"Custom Ibis expressions are not supported directly in measure '{measure.alias}'.")
-
-        if measure.filter_condition:
-            # Handle filtered measure by using Ibis 'where' on the column
-            # This is equivalent to conditional aggregation (FILTER clause in SQL)
-            if col is not None:
-                # Need to convert dictionary filter to Ibis expression
-                # This requires access to the table to build the filter
-                filter_expr = self._convert_filter_to_ibis(table, [measure.filter_condition])
-                if filter_expr is not None:
-                    col = col.where(filter_expr)
-        
-        if agg_type == 'sum':
-            return col.sum().name(measure.alias)
-        elif agg_type == 'avg':
-            return col.mean().name(measure.alias)
-        elif agg_type == 'min':
-            return col.min().name(measure.alias)
-        elif agg_type == 'max':
-            return col.max().name(measure.alias)
-        elif agg_type == 'count':
-            return col.count().name(measure.alias) if measure.field else table.count().name(measure.alias)
-        elif agg_type in ['count_distinct', 'distinct_count']:
-            return col.nunique().name(measure.alias)
-        elif agg_type == 'stddev':
-            return col.std().name(measure.alias)
-        elif agg_type == 'variance':
-            return col.var().name(measure.alias)
-        elif agg_type == 'median':
-            if not self._supports_quantile:
-                 # Fallback: simple avg if strictly necessary or error
-                 raise ValueError(f"Median aggregation requires quantile support in backend {self._database_type}")
-            return col.quantile(0.5).name(measure.alias)
-        elif agg_type == 'percentile':
-            if measure.percentile is None:
-                raise ValueError("Percentile aggregation requires percentile parameter")
-            if not self._supports_quantile:
-                 raise ValueError(f"Percentile aggregation requires quantile support in backend {self._database_type}")
-            return col.quantile(float(measure.percentile)).name(measure.alias)
-        elif agg_type == 'string_agg':
-            sep = measure.separator or ','
-            return col.group_concat(sep).name(measure.alias)
-        elif agg_type == 'array_agg':
-            if not hasattr(col, 'collect'):
-                 raise ValueError(f"Array aggregation (collect) not supported in this Ibis version or backend {self._database_type}")
-            return col.collect().name(measure.alias)
-        elif agg_type in {"first", "last"}:
-            method = 'first' if agg_type == 'first' else 'last'
-            return col.arbitrary(how=method).name(measure.alias)
-        else:
-            raise ValueError(f"Unsupported aggregation type: {agg_type}")
+    # _convert_filter_to_ibis removed, using self.builder.build_filter_expression
+    # _convert_sort_to_ibis removed, using self.builder.build_sort_expressions
+    # _convert_measure_to_ibis removed, using self.builder.build_measure_aggregation
+    # _convert_cursor_to_ibis_filter removed, using self.builder.build_cursor_filter_expression
 
     def _plan_standard(self, spec: PivotSpec, columns_top_n: Optional[int],
                        columns_order_by_measure: Optional[Measure],
@@ -452,12 +346,12 @@ class IbisPlanner:
         
         filtered_table = base_table
         if spec.filters:
-            filter_expr = self._convert_filter_to_ibis(base_table, spec.filters)
+            filter_expr = self.builder.build_filter_expression(base_table, spec.filters)
             if filter_expr is not None:
                 filtered_table = filtered_table.filter(filter_expr)
         
         if spec.cursor and spec.sort:
-            cursor_filter_expr = self._convert_cursor_to_ibis_filter(filtered_table, spec)
+            cursor_filter_expr = self.builder.build_cursor_filter_expression(filtered_table, spec)
             if cursor_filter_expr is not None:
                 filtered_table = filtered_table.filter(cursor_filter_expr)
 
@@ -475,7 +369,14 @@ class IbisPlanner:
         ibis_aggregations = []
         
         for m in base_measures:
-            expr = self._convert_measure_to_ibis(filtered_table, m)
+            # Check for median/percentile support which Builder might not check strictly against *this* Planner's knowledge
+            # But we trust Builder or add checks here if needed.
+            if m.agg == 'median' and not self._supports_quantile:
+                 raise ValueError(f"Median aggregation requires quantile support in backend {self._database_type}")
+            if m.agg == 'percentile' and not self._supports_quantile:
+                 raise ValueError(f"Percentile aggregation requires quantile support in backend {self._database_type}")
+
+            expr = self.builder.build_measure_aggregation(filtered_table, m)
             ibis_aggregations.append(expr)
             alias_to_expr[m.alias] = expr
 
@@ -523,7 +424,7 @@ class IbisPlanner:
             aggregated_table = filtered_table.aggregate(ibis_aggregations)
         
         if spec.sort:
-            ibis_sorts = self._convert_sort_to_ibis(aggregated_table, spec.sort)
+            ibis_sorts = self.builder.build_sort_expressions(aggregated_table, spec.sort)
             if ibis_sorts:
                 aggregated_table = aggregated_table.order_by(ibis_sorts)
         
@@ -619,58 +520,6 @@ class IbisPlanner:
             raise ValueError(f"Failed to evaluate expression '{expression}': {e}")
 
 
-    def _convert_cursor_to_ibis_filter(self, table: IbisTable, spec: PivotSpec) -> Optional[IbisExpr]:
-        """Builds an Ibis WHERE clause for cursor-based pagination."""
-        if not spec.cursor or not spec.sort:
-            return None
-
-        sort_keys = spec.sort if isinstance(spec.sort, list) else [spec.sort]
-        
-        or_clauses = []
-
-        for i in range(len(sort_keys)):
-            current_key = sort_keys[i]
-            field = current_key['field']
-            order = current_key.get('order', 'asc').lower()
-            
-            and_clauses = []
-            for j in range(i):
-                prev_key = sort_keys[j]
-                prev_field = prev_key['field']
-                prev_val = spec.cursor.get(prev_field)
-                if prev_field not in table.columns:
-                    return None
-                and_clauses.append(table[prev_field] == prev_val)
-
-            if field not in table.columns:
-                return None
-
-            col_expr = table[field]
-            cursor_value = spec.cursor.get(field)
-            if order == 'asc':
-                current_clause = col_expr > cursor_value
-            else: # order == 'desc'
-                current_clause = col_expr < cursor_value
-            
-            if and_clauses:
-                full_clause = and_clauses[0]
-                for clause in and_clauses[1:]:
-                    full_clause &= clause
-                full_clause &= current_clause
-            else:
-                full_clause = current_clause
-            
-            or_clauses.append(full_clause)
-
-        if not or_clauses:
-            return None
-        
-        combined_or_filter = or_clauses[0]
-        for or_expr in or_clauses[1:]:
-            combined_or_filter |= or_expr
-        
-        return combined_or_filter
-
     def _plan_grouping_sets(self, spec: PivotSpec, include_metadata: bool) -> Dict[str, Any]:
         """
         Plan query with GROUPING SETS, CUBE, or ROLLUP using Ibis expressions.
@@ -678,7 +527,7 @@ class IbisPlanner:
         base_table = self.con.table(spec.table)
         
         if spec.filters:
-            filter_expr = self._convert_filter_to_ibis(base_table, spec.filters)
+            filter_expr = self.builder.build_filter_expression(base_table, spec.filters)
             if filter_expr is not None:
                 base_table = base_table.filter(filter_expr)
         
@@ -703,7 +552,7 @@ class IbisPlanner:
         
         for group in groupings:
             group_cols = list(group)
-            aggs = [self._convert_measure_to_ibis(base_table, m) for m in base_measures]
+            aggs = [self.builder.build_measure_aggregation(base_table, m) for m in base_measures]
             
             if group_cols:
                 sub_expr = base_table.group_by(group_cols).aggregate(aggs)
@@ -729,7 +578,7 @@ class IbisPlanner:
                 unioned_expr = unioned_expr.union(projected_expr)
                 
         if spec.sort:
-            ibis_sorts = self._convert_sort_to_ibis(unioned_expr, spec.sort)
+            ibis_sorts = self.builder.build_sort_expressions(unioned_expr, spec.sort)
             if ibis_sorts:
                 unioned_expr = unioned_expr.order_by(ibis_sorts)
                 
@@ -776,7 +625,7 @@ class IbisPlanner:
         base_table = self.con.table(spec.table)
         
         if spec.filters:
-            filter_expr = self._convert_filter_to_ibis(base_table, spec.filters)
+            filter_expr = self.builder.build_filter_expression(base_table, spec.filters)
             if filter_expr is not None:
                 base_table = base_table.filter(filter_expr)
                 
@@ -784,7 +633,7 @@ class IbisPlanner:
         pivot_col = spec.columns[0] if spec.columns else None
         
         if not pivot_col:
-             return base_table.aggregate([self._convert_measure_to_ibis(base_table, m) for m in base_measures])
+             return base_table.aggregate([self.builder.build_measure_aggregation(base_table, m) for m in base_measures])
 
         pivot_aggs = []
         
@@ -825,7 +674,7 @@ class IbisPlanner:
             valid_sorts = [s for s in (spec.sort if isinstance(spec.sort, list) else [spec.sort]) 
                           if s.get('field') in row_dims]
             if valid_sorts:
-                ibis_sorts = self._convert_sort_to_ibis(result_expr, valid_sorts)
+                ibis_sorts = self.builder.build_sort_expressions(result_expr, valid_sorts)
                 if ibis_sorts:
                     result_expr = result_expr.order_by(ibis_sorts)
                     
@@ -841,7 +690,7 @@ class IbisPlanner:
         base_table = self.con.table(spec.table)
         
         if spec.filters:
-            filter_expr = self._convert_filter_to_ibis(base_table, spec.filters)
+            filter_expr = self.builder.build_filter_expression(base_table, spec.filters)
             if filter_expr is not None:
                 base_table = base_table.filter(filter_expr)
                 
@@ -866,7 +715,7 @@ class IbisPlanner:
             group_cols = []
             
         base_measures = [m for m in spec.measures if not m.ratio_numerator]
-        aggs = [self._convert_measure_to_ibis(base_table, m) for m in base_measures]
+        aggs = [self.builder.build_measure_aggregation(base_table, m) for m in base_measures]
         
         if group_cols:
             result_expr = base_table.group_by(group_cols).aggregate(aggs)
@@ -874,7 +723,7 @@ class IbisPlanner:
             result_expr = base_table.aggregate(aggs)
             
         if spec.sort:
-            ibis_sorts = self._convert_sort_to_ibis(result_expr, spec.sort)
+            ibis_sorts = self.builder.build_sort_expressions(result_expr, spec.sort)
             if ibis_sorts:
                 result_expr = result_expr.order_by(ibis_sorts)
                 
@@ -899,7 +748,7 @@ class IbisPlanner:
         
         filtered_table = base_table
         if filters:
-            filter_expr = self._convert_filter_to_ibis(base_table, filters)
+            filter_expr = self.builder.build_filter_expression(base_table, filters)
             if filter_expr is not None:
                 filtered_table = filtered_table.filter(filter_expr)
         
@@ -915,7 +764,7 @@ class IbisPlanner:
             col_expr = concat_expr[:-1].name('_col_key')
 
         if order_measure:
-            agg_measure_expr = self._convert_measure_to_ibis(filtered_table, order_measure)
+            agg_measure_expr = self.builder.build_measure_aggregation(filtered_table, order_measure)
             result = filtered_table.group_by(col_expr).aggregate(agg_measure_expr)
             result = result.order_by(ibis.desc(agg_measure_expr.name))
         else:

@@ -50,12 +50,6 @@ class IntelligentPrefetchManager:
         predicted_paths = await self.pattern_analyzer.analyze_patterns(user_session)
         
         # 2. Add immediate children of currently expanded paths
-        # Logic: If a user has expanded 'Region: North', they likely want to see the cities in North.
-        # We need to find what the next dimension is for each expanded path.
-        
-        paths_to_fetch = []
-        
-        # Combine predicted and current expanded paths
         candidates = expanded_paths + predicted_paths
         
         # Deduplicate candidates
@@ -67,29 +61,118 @@ class IntelligentPrefetchManager:
                 seen.add(t)
                 unique_candidates.append(c)
         
+        # Group candidates by depth (level) to batch queries
+        candidates_by_depth = {}
         for path in unique_candidates:
-            # Determine the depth of this path
             depth = len(path)
-            
-            # Check if there is a next level in the rows hierarchy
             if depth < len(spec.rows):
-                next_dim = spec.rows[depth] # The dimension to fetch values for
+                if depth not in candidates_by_depth:
+                    candidates_by_depth[depth] = []
+                candidates_by_depth[depth].append(path)
+        
+        paths_to_fetch = []
+        
+        # Execute batch queries for each depth
+        for depth, paths in candidates_by_depth.items():
+            try:
+                # Target dimension for this depth
+                target_dim = spec.rows[depth]
+                parent_dims = spec.rows[:depth]
                 
-                # We want to fetch the top N values for this next dimension, 
-                # effectively pre-loading the children nodes.
-                try:
-                    children = await self._fetch_top_children(spec.table, spec.rows[:depth], path, next_dim)
-                    for child_val in children:
-                        new_path = path + [child_val]
-                        paths_to_fetch.append(new_path)
-                except Exception as e:
-                    print(f"Error prefetching children for path {path}: {e}")
+                # Fetch children for all paths at this depth in one go
+                # returns list of (parent_path_tuple, child_value)
+                results = await self._fetch_children_batch(spec.table, parent_dims, paths, target_dim)
+                
+                for parent_path_tuple, child_val in results:
+                    new_path = list(parent_path_tuple) + [child_val]
+                    paths_to_fetch.append(new_path)
                     
+            except Exception as e:
+                print(f"Error batch prefetching for depth {depth}: {e}")
+
         return paths_to_fetch
+
+    async def _fetch_children_batch(self, table_name: str, parent_dims: List[str], parent_paths: List[List[str]], target_dim: str, limit_per_parent: int = 5) -> List[Any]:
+        """
+        Queries the database to find the top values for the next dimension for multiple parent paths.
+        Uses OR filters to batch the request.
+        """
+        if not parent_paths:
+            return []
+            
+        try:
+            t = self.backend.table(table_name)
+            
+            # Construct OR filter: (dim1=v1 AND dim2=v2) OR (...)
+            # For Ibis, we can build this expression
+            
+            # Optimization: If only 1 parent dim, use ISIN
+            if len(parent_dims) == 1:
+                dim = parent_dims[0]
+                values = [p[0] for p in parent_paths]
+                filter_expr = t[dim].isin(values)
+            elif len(parent_dims) == 0:
+                # Root level, no filter
+                filter_expr = None
+            else:
+                # Multiple dimensions: build OR chain
+                or_expr = None
+                for path in parent_paths:
+                    and_expr = None
+                    for dim, val in zip(parent_dims, path):
+                        clause = t[dim] == val
+                        and_expr = clause if and_expr is None else (and_expr & clause)
+                    
+                    or_expr = and_expr if or_expr is None else (or_expr | and_expr)
+                filter_expr = or_expr
+            
+            query = t
+            if filter_expr is not None:
+                query = query.filter(filter_expr)
+            
+            # Select parent dims and target dim to reconstruct relationship
+            selection = parent_dims + [target_dim]
+            query = query.select(selection).distinct()
+            
+            # We want limit PER parent. Standard SQL doesn't support LIMIT PER GROUP easily without window functions.
+            # Window function: rank() over (partition by parent_dims order by target_dim) <= limit
+            # If backend supports window functions
+            
+            # Try window function if possible, else global limit (suboptimal but safe) or just fetch more
+            # For now, let's try a reasonable global limit to avoid explosion, assuming 'limit_per_parent' * num_paths
+            global_limit = limit_per_parent * len(parent_paths) * 2 # Safety factor
+            query = query.limit(global_limit)
+            
+            # Execute
+            if hasattr(self.backend, 'execute'):
+                 result = query.execute()
+            else:
+                 # If backend is just the connection object (e.g. duckdb con)
+                 # self.backend might be Ibis connection which has .execute() on expression but not on itself?
+                 # Wait, self.backend passed in __init__ is 'con'.
+                 # So query.execute() should work if query is an Ibis expression.
+                 result = query.execute()
+            
+            # Process result to list of (parent_tuple, child_val)
+            output = []
+            # result is a pandas DataFrame or similar
+            if hasattr(result, 'to_dict'):
+                 records = result.to_dict('records')
+                 for row in records:
+                     # Reconstruct parent path
+                     p_path = tuple(row[d] for d in parent_dims)
+                     child = row[target_dim]
+                     output.append((p_path, child))
+            
+            return output
+
+        except Exception as e:
+            print(f"Batch prefetch query failed: {e}")
+            return []
 
     async def _fetch_top_children(self, table_name: str, parent_dims: List[str], parent_values: List[str], target_dim: str, limit: int = 5) -> List[Any]:
         """
-        Queries the database to find the top values for the next dimension.
+        Legacy method kept for reference or single-path fallback.
         """
         # Using Ibis to construct the query
         try:
