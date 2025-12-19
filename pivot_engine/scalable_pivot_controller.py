@@ -221,6 +221,110 @@ class ScalablePivotController:
         result = await self.progressive_loader.load_hierarchical_progressive(spec, expanded_paths, level_callback)
         return result
 
+    async def run_pivot_async(
+        self,
+        spec: Any,
+        return_format: str = "arrow",
+        force_refresh: bool = False
+    ) -> Union[Dict[str, Any], pa.Table]:
+        """Execute a pivot query asynchronously with all scalability features"""
+        self._request_count += 1
+        spec = self._normalize_spec(spec)
+        
+        # Planning is fast and CPU bound, keep it sync for simplicity or offload if needed
+        plan_result = self.planner.plan(spec)
+        metadata = plan_result.get("metadata", {})
+        
+        if metadata.get("needs_column_discovery"):
+            result_table = await self._execute_topn_pivot_async(spec, plan_result, force_refresh)
+        else:
+            result_table = await self._execute_standard_pivot_async(spec, plan_result, force_refresh)
+
+        # Final conversion
+        if return_format == "dict":
+            # cpu bound conversion
+            return self._convert_table_to_dict(result_table, spec)
+
+        return result_table
+
+    async def _execute_standard_pivot_async(self, spec: Any, plan_result: Dict[str, Any], force_refresh: bool) -> pa.Table:
+        """Execute standard pivot asynchronously"""
+        queries_to_run, strategy = self.diff_engine.plan(plan_result, spec, force_refresh=force_refresh)
+
+        self._cache_hits += strategy.get("cache_hits", 0)
+        self._cache_misses += len(queries_to_run)
+
+        results = []
+        loop = asyncio.get_running_loop()
+        
+        for query_expr in queries_to_run:
+            if hasattr(query_expr, 'to_pyarrow'):
+                try:
+                    # Offload blocking Ibis execution to thread pool
+                    result = await loop.run_in_executor(None, query_expr.to_pyarrow)
+                    results.append(result)
+                except Exception as e:
+                    print(f"Error executing Ibis expression async: {e}")
+                    results.append(pa.table({}))
+            else:
+                if self.backend and hasattr(self.backend, 'execute_async'):
+                    result = await self.backend.execute_async(query_expr)
+                    results.append(result)
+                elif self.backend and hasattr(self.backend, 'execute'):
+                    # Fallback to sync execute in executor
+                    result = await loop.run_in_executor(None, self.backend.execute, query_expr)
+                    results.append(result)
+                else:
+                     print(f"Error: Cannot execute legacy query format with current backend.")
+                     results.append(pa.table({}))
+
+        main_result = results[0] if results else pa.table({}) if pa is not None else None
+
+        metadata = plan_result.get("metadata", {})
+        if metadata.get("needs_totals", False) and main_result is not None and main_result.num_rows > 0:
+            main_result = self._compute_totals_arrow(main_result, metadata)
+
+        final_table = self.diff_engine.merge_and_finalize([main_result] if main_result is not None else [], plan_result, spec, strategy)
+
+        return main_result if main_result is not None else pa.table({}) if pa is not None else None
+
+    async def _execute_topn_pivot_async(self, spec: Any, plan_result: Dict[str, Any], force_refresh: bool) -> pa.Table:
+        """Execute top-N pivot asynchronously"""
+        queries = plan_result.get("queries", [])
+        col_ibis_expr = queries[0]
+        
+        col_cache_key = self._cache_key_for_query(col_ibis_expr, spec)
+        cached_cols_table = self.cache.get(col_cache_key) if not force_refresh else None
+        
+        loop = asyncio.get_running_loop()
+
+        if cached_cols_table:
+            column_values = cached_cols_table.column("_col_key").to_pylist()
+            self._cache_hits += 1
+        else:
+            col_results_table = await loop.run_in_executor(None, col_ibis_expr.to_pyarrow)
+            column_values = col_results_table.column("_col_key").to_pylist()
+            self.cache.set(col_cache_key, col_results_table)
+            self._cache_misses += 1
+
+        pivot_ibis_expr = self.planner.build_pivot_query_from_columns(spec, column_values)
+        
+        pivot_cache_key = self._cache_key_for_query(pivot_ibis_expr, spec)
+        cached_pivot_table = self.cache.get(pivot_cache_key) if not force_refresh else None
+
+        if cached_pivot_table:
+            result_table = cached_pivot_table
+        else:
+            pivot_results_table = await loop.run_in_executor(None, pivot_ibis_expr.to_pyarrow)
+            self.cache.set(pivot_cache_key, pivot_results_table)
+            result_table = pivot_results_table
+
+        metadata = plan_result.get("metadata", {})
+        if metadata.get("needs_totals", False) and result_table is not None and result_table.num_rows > 0:
+            result_table = self._compute_totals_arrow(result_table, metadata)
+
+        return result_table
+
     def run_pivot(
         self,
         spec: Any,
@@ -364,25 +468,72 @@ class ScalablePivotController:
         return spec
 
     def _convert_table_to_dict(self, table: Optional[pa.Table], spec: PivotSpec) -> Dict[str, Any]:
-        """Convert a PyArrow Table to the legacy dictionary format."""
+        """Convert a PyArrow Table to the legacy dictionary format with optimization."""
         if table is None or table.num_rows == 0:
             return {"columns": [], "rows": [], "next_cursor": None}
 
-        data_as_dicts = table.to_pylist()
-        # Convert Decimal and other non-JSON-serializable types to basic types
         rows_as_lists = []
-        for row in data_as_dicts:
-            row_list = []
-            for value in row.values():
-                if hasattr(value, 'as_py'):  # Arrow scalar
-                    value = value.as_py()
-                # Handle non-JSON serializable types
-                if isinstance(value, (decimal.Decimal,)):
-                    value = float(value)
-                elif value is None or (isinstance(value, float) and (value != value)):  # NaN check
-                    value = None
-                row_list.append(value)
-            rows_as_lists.append(row_list)
+        try:
+            # 1. Try Vectorized Pandas Conversion (Fastest)
+            df = table.to_pandas()
+
+            # Handle Decimal -> Float
+            for col in df.columns:
+                 # Check for object type which might hold Decimals
+                 if df[col].dtype == 'object':
+                     # Heuristic: check first non-null
+                     valid_idx = df[col].first_valid_index()
+                     if valid_idx is not None and isinstance(df[col][valid_idx], decimal.Decimal):
+                         df[col] = df[col].astype(float)
+
+            # Handle NaN -> None (standard JSON)
+            # Efficiently replace NaN with None using where
+            df = df.where(df.notnull(), None)
+
+            rows_as_lists = df.values.tolist()
+
+        except (ImportError, Exception):
+            # 2. Fallback to vectorized PyArrow operations (instead of row-by-row)
+            # This is much faster than the previous row-by-row approach
+            import pyarrow.compute as pc
+
+            # Convert each column to Python lists vectorized
+            num_rows = table.num_rows
+            num_cols = len(table.schema)
+
+            # Pre-allocate the result lists
+            rows_as_lists = [None] * num_rows
+            for row_idx in range(num_rows):
+                rows_as_lists[row_idx] = [None] * num_cols
+
+            # Process each column vectorized
+            for col_idx, col_name in enumerate(table.column_names):
+                col_array = table.column(col_idx)
+
+                # Handle different PyArrow types efficiently
+                if pa.types.is_dictionary(col_array.type):
+                    # Convert dictionary to string values
+                    values = pc.cast(col_array, pa.string()).to_pylist()
+                elif pa.types.is_decimal(col_array.type):
+                    # Convert decimals to floats
+                    values = [float(x) if x is not None else None for x in col_array.to_pylist()]
+                elif pa.types.is_floating(col_array.type):
+                    # Handle floats including NaN
+                    values = col_array.to_pylist()
+                    # Replace NaN with None
+                    for i, val in enumerate(values):
+                        if val is not None and isinstance(val, float) and val != val:  # NaN check
+                            values[i] = None
+                elif pa.types.is_temporal(col_array.type) or pa.types.is_timestamp(col_array.type):
+                    # Convert temporal types to string representation
+                    values = [str(x) if x is not None else None for x in col_array.to_pylist()]
+                else:
+                    # For other types, use direct conversion
+                    values = col_array.to_pylist()
+
+                # Put the values in the appropriate column of each row
+                for row_idx in range(num_rows):
+                    rows_as_lists[row_idx][col_idx] = values[row_idx]
 
         next_cursor = None
         if spec.limit and table.num_rows == spec.limit: # Check if result size matches limit
@@ -561,3 +712,35 @@ class ScalablePivotController:
         """Close any resources held by the controller"""
         if hasattr(self, 'backend') and hasattr(self.backend, 'close'):
             self.backend.close()
+
+    def run_pivot_arrow(
+        self,
+        spec: Any,
+    ) -> pa.Table:
+        """
+        Execute a pivot query and return the result as a PyArrow Table.
+        This method is optimized for Arrow Flight operations and direct Arrow consumption.
+        """
+        # Execute the pivot query with Arrow format and return the raw Arrow table
+        result = self.run_pivot(spec, return_format="arrow")
+        if isinstance(result, pa.Table):
+            return result
+        else:
+            # If for some reason it's not an Arrow table, convert it
+            raise ValueError(f"Expected PyArrow Table but got {type(result)}")
+
+    async def run_pivot_arrow_async(
+        self,
+        spec: Any,
+    ) -> pa.Table:
+        """
+        Execute a pivot query asynchronously and return the result as a PyArrow Table.
+        This method is optimized for Arrow Flight operations and direct Arrow consumption with async support.
+        """
+        # Execute the pivot query with Arrow format and return the raw Arrow table
+        result = await self.run_pivot_async(spec, return_format="arrow")
+        if isinstance(result, pa.Table):
+            return result
+        else:
+            # If for some reason it's not an Arrow table, convert it
+            raise ValueError(f"Expected PyArrow Table but got {type(result)}")

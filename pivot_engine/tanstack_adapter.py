@@ -176,8 +176,8 @@ class TanStackPivotAdapter:
         # Convert request to pivot spec
         pivot_spec = self.convert_tanstack_request_to_pivot_spec(request)
         
-        # Execute pivot operation
-        pivot_result = self.controller.run_pivot(pivot_spec, return_format="dict")
+        # Execute pivot operation asynchronously
+        pivot_result = await self.controller.run_pivot_async(pivot_spec, return_format="dict")
         
         # Convert result to TanStack format
         tanstack_result = self.convert_pivot_result_to_tanstack_format(pivot_result, request)
@@ -190,25 +190,43 @@ class TanStackPivotAdapter:
         """Handle hierarchical TanStack request with expansion state"""
         pivot_spec = self.convert_tanstack_request_to_pivot_spec(request)
         
-        # Use controller's hierarchical method
-        hierarchy_result = self.controller.run_hierarchical_pivot(pivot_spec.to_dict())
+        # Ensure the expansion state is properly communicated to the tree manager
+        # We use the batch loading method which is more efficient for multiple levels
+        # The controller/tree manager handles the expansion logic (filtering visible nodes)
+        # effectively, so we don't need to re-filter in Python here.
         
-        # Apply expansion state
-        filtered_data = self._apply_expansion_state(hierarchy_result, expanded_paths)
+        hierarchy_result = self.controller.run_hierarchical_pivot_batch_load(
+             pivot_spec.to_dict(), expanded_paths, max_levels=10
+        )
         
+        # run_hierarchical_pivot_batch_load returns a dict of {path_key: [nodes]}
+        # We need to flatten this into a list of rows for TanStack, respecting the tree structure order if possible.
+        # However, TanStack often expects a flat list if using "manual" grouping or a tree structure.
+        # If we assume TanStack Table's "expanded" state management, we often send a flat list of *visible* rows.
+        
+        # Reconstruct the flat list of visible rows from the batch result
+        # This is faster than the previous approach of fetching all and filtering
+        visible_rows = []
+        
+        # Helper to sort paths to ensure parents come before children
+        # This is a simple topological sort based on path length and value
+        sorted_paths = sorted(hierarchy_result.keys(), key=lambda k: (len(k.split('|')) if k else 0, k))
+        
+        for path_key in sorted_paths:
+            nodes = hierarchy_result[path_key]
+            for node in nodes:
+                 visible_rows.append(node)
+
         # Convert to TanStack format
+        # We skip _apply_expansion_state as we trusted the batch loader to only return relevant data
         tanstack_result = self.convert_pivot_result_to_tanstack_format(
-            filtered_data, request
+            visible_rows, request
         )
         
         return tanstack_result
     
-    def _apply_expansion_state(self, hierarchy_result: Dict[str, Any], 
-                              expanded_paths: List[List[str]]) -> Dict[str, Any]:
-        """Apply expansion state to hierarchy result"""
-        # For now, return the result as-is; in a full implementation,
-        # this would filter the result based on expansion state
-        return hierarchy_result
+    # _apply_expansion_state removed as it is now handled by the controller/tree manager logic
+
     
     def get_schema_info(self, table_name: str) -> Dict[str, Any]:
         """Get schema information for TanStack column configuration"""
@@ -259,7 +277,7 @@ class TanStackPivotAdapter:
         pivot_spec = self.convert_tanstack_request_to_pivot_spec(request)
         
         # Use the controller to get grouped data
-        pivot_result = self.controller.run_pivot(pivot_spec, return_format="dict")
+        pivot_result = await self.controller.run_pivot_async(pivot_spec, return_format="dict")
         
         # Format for TanStack grouping
         tanstack_result = self.convert_pivot_result_to_tanstack_format(pivot_result, request)

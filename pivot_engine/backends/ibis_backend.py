@@ -106,40 +106,44 @@ class IbisBackend:
         self._query_count = 0
         self._total_time = 0.0
 
-    def execute(self, query: Dict[str, Any]) -> pa.Table:
+    def execute(self, query: Union[Dict[str, Any], str], params: Optional[List[Any]] = None, return_arrow: bool = True) -> Union[pa.Table, List[Dict[str, Any]]]:
         """
-        Execute a query and return the result as a PyArrow Table.
+        Execute a query and return the result.
 
         Args:
-            query: A dictionary containing the 'sql' and 'params'.
-                   For Ibis, 'sql' is actually an Ibis expression.
+            query: A dictionary containing the 'ibis_expr' or 'sql', or a raw SQL string.
+            params: Optional list of parameters (mostly for raw SQL).
+            return_arrow: If True, returns PyArrow Table. If False, returns list of dicts.
 
         Returns:
-            A PyArrow Table with the query result.
+            A PyArrow Table or list of dicts.
         """
         start_time = time.time()
 
         try:
-            # For Ibis, execute the expression directly
-            if isinstance(query, dict) and 'ibis_expr' in query:
-                ibis_expr = query['ibis_expr']
-                # Prefer to_pyarrow() for zero-copy efficiency
-                if hasattr(ibis_expr, 'to_pyarrow'):
-                    result = ibis_expr.to_pyarrow()
-                else:
-                    result = ibis_expr.execute()
-            else:
-                # If plain SQL is provided, convert to Ibis expression
-                sql = query.get("sql", "")
-                if sql:
-                    # Use raw_sql method for direct SQL execution
+            result = None
+            # Handle dictionary query wrapper
+            if isinstance(query, dict):
+                if 'ibis_expr' in query:
+                    ibis_expr = query['ibis_expr']
+                    # Prefer to_pyarrow() for zero-copy efficiency
+                    if return_arrow and hasattr(ibis_expr, 'to_pyarrow'):
+                        result = ibis_expr.to_pyarrow()
+                    else:
+                        result = ibis_expr.execute()
+                elif 'sql' in query:
+                    sql = query['sql']
                     result = self.con.raw_sql(sql)
                 else:
-                    raise ValueError("Query must contain either 'ibis_expr' or 'sql' field")
+                    raise ValueError("Query dict must contain either 'ibis_expr' or 'sql'")
+            # Handle raw SQL string
+            elif isinstance(query, str):
+                result = self.con.raw_sql(query)
+            else:
+                 raise ValueError(f"Invalid query type: {type(query)}")
 
-            # Convert to Arrow table if not already
-            if not isinstance(result, pa.Table):
-                # Convert pandas DataFrame or other results to Arrow table
+            # Convert to Arrow table if requested and not already
+            if return_arrow and not isinstance(result, pa.Table):
                 if hasattr(result, 'to_arrow_table'):
                     result = result.to_arrow_table()
                 elif hasattr(result, 'to_arrow'):
@@ -151,10 +155,13 @@ class IbisBackend:
                     else:
                         # Fallback for other types
                         try:
-                            result = pa.Table.from_pandas(pd.DataFrame(result))
+                            df = pd.DataFrame(result)
+                            result = pa.Table.from_pandas(df)
                         except:
                             pass
-            
+            elif not return_arrow and isinstance(result, pa.Table):
+                 result = result.to_pylist()
+
             # Performance tracking
             self._query_count += 1
             self._total_time += (time.time() - start_time)
@@ -165,6 +172,14 @@ class IbisBackend:
             print(f"Error executing query:\nQuery: {query}\nError: {e}")
             raise
 
+    async def execute_async(self, query: Union[Dict[str, Any], str], params: Optional[List[Any]] = None, return_arrow: bool = True) -> Any:
+        """
+        Execute query asynchronously in a thread pool.
+        """
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.execute, query, params, return_arrow)
+
     def execute_arrow(
         self,
         query: Union[str, Dict[str, Any]],
@@ -172,8 +187,6 @@ class IbisBackend:
     ) -> pa.Table:
         """
         Execute query and return Arrow table.
-
-        Convenience method for zero-copy Arrow output.
         """
         return self.execute(query, params, return_arrow=True)
 
@@ -184,13 +197,6 @@ class IbisBackend:
     ) -> List[Union[List[Dict[str, Any]], pa.Table]]:
         """
         Execute multiple queries in sequence.
-
-        Args:
-            queries: List of query dicts with "sql" and "params"
-            return_arrow: Return Arrow tables
-
-        Returns:
-            List of results (one per query)
         """
         results = []
         for query in queries:
@@ -202,23 +208,31 @@ class IbisBackend:
         self,
         query: Union[str, Dict[str, Any]],
         params: Optional[List[Any]] = None,
-        batch_size: int = 1000
+        batch_size: int = 10000
     ):
         """
-        Execute query and yield results in batches.
-
-        Useful for large result sets to avoid loading everything in memory.
+        Execute query and yield results in batches using efficient streaming if possible.
 
         Yields:
-            Batches of rows as list of dicts
+            Batches of rows as list of dicts (or Arrow RecordBatches if we enhanced the signature)
         """
-        # Note: Streaming behavior varies by database backend
-        # For now, return the full result as batches
-        result_table = self.execute(query, params)
+        if isinstance(query, dict) and 'ibis_expr' in query:
+             ibis_expr = query['ibis_expr']
+             # Use Ibis's native batch streaming if available (Ibis 6+)
+             if hasattr(ibis_expr, 'to_pyarrow_batches'):
+                 # to_pyarrow_batches returns an iterator of RecordBatches
+                 for batch in ibis_expr.to_pyarrow_batches(limit=None, chunk_size=batch_size):
+                     yield batch.to_pylist()
+                 return
+
+        # Fallback to executing full query and slicing (old behavior, but safe)
+        # Or better: if it's Ibis, we could try to reimplement chunking manually
+        # But for now, let's keep the fallback for non-Ibis-batch-supported cases.
+        result = self.execute(query, params, return_arrow=True)
         
-        num_rows = result_table.num_rows
+        num_rows = result.num_rows
         for i in range(0, num_rows, batch_size):
-            batch = result_table.slice(i, min(batch_size, num_rows - i))
+            batch = result.slice(i, min(batch_size, num_rows - i))
             yield batch.to_pylist()
 
     def register_arrow_dataset(

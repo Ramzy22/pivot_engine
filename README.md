@@ -28,6 +28,9 @@ A high-performance, scalable pivot engine optimized for large datasets with adva
 - **Query diffing** - Semantic spec diffing for intelligent caching
 - **Pruning strategies** - Multiple algorithms to reduce complexity
 - **Arrow-native operations** - Zero-copy data transfers
+- **Async everywhere** - Fully asynchronous architecture for high concurrency
+- **Optimized Arrow-to-JSON conversion** - Vectorized serialization for massive data transfer speedups
+- **Arrow Flight support** - Native Arrow format for frontend integration
 
 ## 🛠️ Supported Backends
 
@@ -81,6 +84,7 @@ app = api.get_app()  # FastAPI app
 │  ScalablePivotController + TanStack Adapter                              │
 │    ├─ All scalable features: CDC, streaming, caching, optimization        │
 │    ├─ Materialized hierarchies, intelligent prefetching                   │
+│    ├─ Async everywhere for high concurrency                               │
 │    └─ Progressive hierarchical loading                                   │
 └───────────────────────────────────────────────────────────────────────────┘
 
@@ -131,8 +135,17 @@ spec = PivotSpec(
     totals=True
 )
 
-# Execute pivot
+# Execute pivot (sync)
 result = controller.run_pivot(spec)
+
+# Execute pivot (async for high concurrency)
+async_result = await controller.run_pivot_async(spec)
+
+# Get raw Arrow table for Arrow Flight (sync)
+arrow_result = controller.run_pivot_arrow(spec)
+
+# Get raw Arrow table for Arrow Flight (async)
+async_arrow_result = await controller.run_pivot_arrow_async(spec)
 ```
 
 ### TanStack Integration
