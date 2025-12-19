@@ -15,19 +15,48 @@ from pivot_engine.config import get_config
 from pivot_engine.tanstack_adapter import TanStackPivotAdapter, TanStackRequest, TanStackOperation
 
 # Pydantic models for API requests/responses
+class MeasureRequest(BaseModel):
+    field: Optional[str]
+    agg: str
+    alias: str
+    expression: Optional[str] = None
+    percentile: Optional[float] = None
+    separator: Optional[str] = None
+    null_handling: Optional[str] = None
+    filter_condition: Optional[str] = None
+    ratio_numerator: Optional[str] = None
+    ratio_denominator: Optional[str] = None
+    ratio_format: str = "decimal"
+    ratio_null_value: Optional[float] = None
+
+class FilterRequest(BaseModel):
+    field: str
+    op: str = "="
+    value: Any
+
+class SortRequest(BaseModel):
+    field: str
+    order: str = "asc"
+    nulls: Optional[str] = None
+
+class PivotConfigRequest(BaseModel):
+    enabled: bool = False
+    top_n: Optional[int] = None
+    order_by_measure: Optional[str] = None
+    include_totals_column: bool = False
+    null_column_label: str = "(null)"
+
 class PivotSpecRequest(BaseModel):
-    """Pydantic model for pivot spec request"""
     table: str
     rows: List[str] = []
     columns: List[str] = []
-    measures: List[Dict[str, Any]] = []
-    filters: List[Dict[str, Any]] = []
-    sort: Optional[List[Dict[str, Any]]] = []
-    limit: int = 1000
+    measures: List[MeasureRequest]
+    filters: List[FilterRequest] = []
+    sort: List[SortRequest] = []
+    limit: Optional[int] = 100
     totals: bool = False
-    having: Optional[List[Dict[str, Any]]] = None
-    grouping_config: Optional[Dict[str, Any]] = None
-    pivot_config: Optional[Dict[str, Any]] = None
+    cursor: Optional[Dict[str, Any]] = None
+    pivot_config: Optional[PivotConfigRequest] = None
 
 
 class TanStackRequestModel(BaseModel):

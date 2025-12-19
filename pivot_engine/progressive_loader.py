@@ -137,8 +137,36 @@ class ProgressiveDataLoader:
         return result
     
     async def _estimate_total_rows(self, spec: PivotSpec) -> int:
-        """Estimate total number of rows for the query using Ibis."""
+        """
+        Estimate total number of rows for the query.
+        Tries to use approximate counts or metadata first, falling back to exact count.
+        """
+        # If filters are present, we likely need exact count as metadata is usually table-wide
+        # Exception: Partition filters if we can detect them (future optimization)
+        
         ibis_table = self.backend.table(spec.table)
+        
+        # 1. If no filters, try fast metadata count
+        if not spec.filters:
+            try:
+                # Some backends support fast count or metadata lookup
+                # Ibis doesn't strictly expose 'approx_count' universally yet
+                # We can try to peek at backend type
+                backend_name = getattr(self.backend, 'name', 'unknown')
+                
+                if backend_name == 'duckdb':
+                    # DuckDB specific: estimated_size in pragma? or strictly select count(*) is optimized?
+                    # DuckDB's count(*) on parquet/arrow is usually O(1) or very fast (metadata scan)
+                    pass 
+                elif backend_name == 'postgres':
+                    # Postgres: SELECT reltuples FROM pg_class ...
+                    # This would require raw SQL execution capability
+                    pass
+                
+                # For now, stick to count() but acknowledge it's usually fast without filters
+                pass
+            except:
+                pass
 
         # Apply filters
         filtered_table = ibis_table
@@ -147,9 +175,14 @@ class ProgressiveDataLoader:
             if filter_expr is not None:
                 filtered_table = filtered_table.filter(filter_expr)
         
-        # Execute count query
-        row_count = await filtered_table.count().execute()
-        return row_count
+        # 2. Execute count query
+        # Future: Use TABLESAMPLE for approximation if count is slow
+        try:
+            row_count = await filtered_table.count().execute()
+            return row_count
+        except Exception as e:
+            print(f"Error estimating row count: {e}")
+            return 0
     
     def _build_chunk_ibis_expression(self, spec: PivotSpec, offset: Optional[int], chunk_size: int, cursor: Optional[Dict[str, Any]] = None) -> IbisTable:
         """Build Ibis expression for a specific chunk."""

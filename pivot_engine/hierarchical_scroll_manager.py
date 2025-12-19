@@ -22,6 +22,74 @@ class HierarchicalVirtualScrollManager:
         self.materialized_hierarchy_manager = materialized_hierarchy_manager
         self.cache_ttl = 300  # 5 minutes default
 
+    def get_total_visible_row_count(self, spec: PivotSpec, expanded_paths: List[List[str]]) -> int:
+        """
+        Calculate total number of visible rows for the scrollbar.
+        Sum of:
+        1. Top level rows.
+        2. Children of each expanded path.
+        """
+        total_count = 0
+        
+        # 1. Count Level 1
+        level_1_table_name = self.materialized_hierarchy_manager.get_rollup_table_name(spec, 1)
+        if level_1_table_name and self.backend is not None:
+             try:
+                 # Fast metadata count if possible, else count()
+                 level_1_table = self.planner.con.table(level_1_table_name)
+                 total_count += level_1_table.count().execute()
+             except Exception:
+                 pass
+
+        # 2. Count Children of Expanded Paths
+        # We can optimize this by grouping expanded paths by level and doing batch counts
+        # Or even simpler: count query with OR filters if feasible.
+        # However, counts are usually fast on rollups.
+        
+        valid_expanded_paths = [p for p in expanded_paths if p]
+        
+        # To avoid N queries, we can try to batch count by level
+        # For each level L > 1, we want count of rows where parent path IN (...)
+        
+        if valid_expanded_paths and self.backend is not None:
+             paths_by_level = {}
+             for path in valid_expanded_paths:
+                 level = len(path) + 1
+                 if level <= len(spec.rows):
+                     if level not in paths_by_level:
+                         paths_by_level[level] = []
+                     paths_by_level[level].append(path)
+            
+             for level, paths in paths_by_level.items():
+                 rollup_table_name = self.materialized_hierarchy_manager.get_rollup_table_name(spec, level)
+                 if not rollup_table_name:
+                     continue
+                     
+                 try:
+                     rollup_table = self.planner.con.table(rollup_table_name)
+                     
+                     # Construct filter: (dim1=v1 AND dim2=v2) OR ...
+                     # Similar to prefetch manager logic
+                     or_expr = None
+                     parent_dims = spec.rows[:level-1]
+                     
+                     for path in paths:
+                         and_expr = None
+                         for dim, val in zip(parent_dims, path):
+                             clause = rollup_table[dim] == val
+                             and_expr = clause if and_expr is None else (and_expr & clause)
+                        
+                         or_expr = and_expr if or_expr is None else (or_expr | and_expr)
+                     
+                     if or_expr is not None:
+                         cnt = rollup_table.filter(or_expr).count().execute()
+                         total_count += cnt
+                         
+                 except Exception as e:
+                     print(f"Error calculating visible count for level {level}: {e}")
+
+        return total_count
+
     def get_visible_rows_hierarchical(self, spec: PivotSpec, start_row: int, end_row: int, expanded_paths: List[List[str]]):
         """Get hierarchical rows for virtual scrolling with expansion state"""
         self.spec = spec

@@ -314,35 +314,43 @@ class ScalablePivotController:
             print(f"Smart materialization failed: {e}")
 
     async def _execute_standard_pivot_async(self, spec: Any, plan_result: Dict[str, Any], force_refresh: bool) -> pa.Table:
-        """Execute standard pivot asynchronously"""
+        """Execute standard pivot asynchronously with parallel execution"""
         queries_to_run, strategy = self.diff_engine.plan(plan_result, spec, force_refresh=force_refresh)
 
         self._cache_hits += strategy.get("cache_hits", 0)
         self._cache_misses += len(queries_to_run)
 
-        results = []
         loop = asyncio.get_running_loop()
-        
+        tasks = []
+
         for query_expr in queries_to_run:
             if hasattr(query_expr, 'to_pyarrow'):
-                try:
-                    # Offload blocking Ibis execution to thread pool
-                    result = await loop.run_in_executor(None, query_expr.to_pyarrow)
-                    results.append(result)
-                except Exception as e:
-                    print(f"Error executing Ibis expression async: {e}")
-                    results.append(pa.table({}))
+                # Create a task for Ibis execution
+                tasks.append(loop.run_in_executor(None, query_expr.to_pyarrow))
             else:
                 if self.backend and hasattr(self.backend, 'execute_async'):
-                    result = await self.backend.execute_async(query_expr)
-                    results.append(result)
+                    tasks.append(self.backend.execute_async(query_expr))
                 elif self.backend and hasattr(self.backend, 'execute'):
                     # Fallback to sync execute in executor
-                    result = await loop.run_in_executor(None, self.backend.execute, query_expr)
-                    results.append(result)
+                    tasks.append(loop.run_in_executor(None, self.backend.execute, query_expr))
                 else:
                      print(f"Error: Cannot execute legacy query format with current backend.")
-                     results.append(pa.table({}))
+                     tasks.append(asyncio.create_task(asyncio.sleep(0, result=pa.table({})))) # Dummy task
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Handle exceptions in results
+            valid_results = []
+            for r in results:
+                if isinstance(r, Exception):
+                    print(f"Query execution error: {r}")
+                    valid_results.append(pa.table({}))
+                else:
+                    valid_results.append(r)
+            results = valid_results
+        else:
+            results = []
 
         main_result = results[0] if results else pa.table({}) if pa is not None else None
 
