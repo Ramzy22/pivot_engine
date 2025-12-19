@@ -2,11 +2,13 @@
 Database Change Detection System for Pivot Engine CDC
 
 This module provides mechanisms to detect database changes and produce change streams.
-For systems that don't have native CDC, it provides polling-based change detection.
+It supports both polling-based detection (for standard databases) and push-based 
+detection (for webhook/event-driven sources).
 """
 import asyncio
 import time
-from typing import Dict, Any, AsyncGenerator, Optional, List
+from abc import ABC, abstractmethod
+from typing import Dict, Any, AsyncGenerator, Optional, List, Union
 from dataclasses import dataclass
 from pivot_engine.cdc.models import Change
 
@@ -16,20 +18,91 @@ class TableSnapshot:
     """Represents a snapshot of table data at a point in time"""
     table_name: str
     row_count: int
-    checksum: str # Using string for consistency with previous implementation
+    checksum: str
     timestamp: float
-    sample_data: List[Dict[str, Any]]  # Contains sample records for change detection
+    sample_data: List[Dict[str, Any]]
     max_id: Optional[int] = None
     max_updated_at: Optional[float] = None
 
 
-class DatabaseChangeDetector:
-    """Detects changes in database tables and generates change events"""
+class CDCProvider(ABC):
+    """Abstract base class for CDC providers"""
+    
+    @abstractmethod
+    async def start_tracking_table(self, table_name: str):
+        """Start tracking changes for a specific table"""
+        pass
+    
+    @abstractmethod
+    async def stop_tracking_table(self, table_name: str):
+        """Stop tracking changes for a specific table"""
+        pass
+        
+    @abstractmethod
+    async def get_change_stream(self, table_name: str, **kwargs) -> AsyncGenerator[Change, None]:
+        """Generate a stream of changes for a table"""
+        pass
+
+
+class PushCDCProvider(CDCProvider):
+    """
+    CDC Provider that accepts externally pushed changes.
+    This enables true push-based CDC via webhooks or external event consumers.
+    """
+    
+    def __init__(self):
+        self.queues: Dict[str, asyncio.Queue] = {}
+        self.active_tables = set()
+        
+    async def start_tracking_table(self, table_name: str):
+        """Start tracking changes for a specific table"""
+        if table_name not in self.queues:
+            self.queues[table_name] = asyncio.Queue()
+        self.active_tables.add(table_name)
+        print(f"Push CDC: Started listening for {table_name}")
+        
+    async def stop_tracking_table(self, table_name: str):
+        """Stop tracking changes for a specific table"""
+        if table_name in self.queues:
+            # Signal end of stream? Or just remove
+            # self.queues[table_name].put_nowait(None) 
+            del self.queues[table_name]
+        self.active_tables.discard(table_name)
+        
+    async def push_change(self, table_name: str, change: Change):
+        """Push a change from an external source"""
+        if table_name in self.queues:
+            await self.queues[table_name].put(change)
+        else:
+            # Optional: warn or auto-create queue
+            pass
+            
+    async def get_change_stream(self, table_name: str, **kwargs) -> AsyncGenerator[Change, None]:
+        """Generate a stream of changes for a table"""
+        if table_name not in self.queues:
+            await self.start_tracking_table(table_name)
+            
+        queue = self.queues[table_name]
+        
+        while table_name in self.active_tables:
+            # Wait for next change
+            try:
+                change = await queue.get()
+                yield change
+                queue.task_done()
+            except asyncio.CancelledError:
+                break
+
+
+class PollingCDCProvider(CDCProvider):
+    """
+    Detects changes in database tables using polling.
+    Optimized to minimize query load using snapshots and incremental keys.
+    """
     
     def __init__(self, backend):
         self.backend = backend  # This is an Ibis connection object
         self.table_snapshots: Dict[str, TableSnapshot] = {}
-        self.change_queues: Dict[str, asyncio.Queue] = {}
         self.running = False
         
     async def start_tracking_table(self, table_name: str):
@@ -37,19 +110,12 @@ class DatabaseChangeDetector:
         # Take initial snapshot
         initial_snapshot = await self._take_snapshot(table_name)
         self.table_snapshots[table_name] = initial_snapshot
-        
-        # Create change queue for the table
-        if table_name not in self.change_queues:
-            self.change_queues[table_name] = asyncio.Queue()
-        
-        print(f"Started tracking changes for table: {table_name}")
+        print(f"Polling CDC: Started tracking {table_name}")
     
     async def stop_tracking_table(self, table_name: str):
         """Stop tracking changes for a specific table"""
         if table_name in self.table_snapshots:
             del self.table_snapshots[table_name]
-        if table_name in self.change_queues:
-            del self.change_queues[table_name]
     
     async def _take_snapshot(self, table_name: str) -> TableSnapshot:
         """Take a snapshot of the table data using Ibis expressions."""
@@ -111,7 +177,6 @@ class DatabaseChangeDetector:
                 changes.extend(await self._detect_deletions(table_name, previous_snapshot, current_snapshot))
             else:
                 # Row count is same but data changed - likely UPDATE operations
-                # The snapshot method cannot granularly detect updates without row data
                 changes.append(Change(
                     table=table_name,
                     type='UPDATE',
@@ -148,7 +213,6 @@ class DatabaseChangeDetector:
                 except Exception as e:
                     print(f"Error fetching incremental inserts by updated_at: {e}")
 
-        # If we successfully fetched real rows
         if new_rows:
             for row in new_rows:
                 changes.append(Change(
@@ -157,7 +221,6 @@ class DatabaseChangeDetector:
                     new_row=row
                 ))
         else:
-            # Fallback: report the difference in row count as placeholder INSERTs
             num_inserts = new_snapshot.row_count - old_snapshot.row_count
             if num_inserts > 0:
                 for _ in range(num_inserts):
@@ -172,8 +235,6 @@ class DatabaseChangeDetector:
     async def _detect_deletions(self, table_name: str, old_snapshot: TableSnapshot, new_snapshot: TableSnapshot) -> List[Change]:
         """Detect DELETE operations"""
         changes = []
-        
-        # For simplicity, we'll report the difference in row count as individual DELETEs
         num_deletes = old_snapshot.row_count - new_snapshot.row_count
         
         for _ in range(num_deletes):
@@ -185,51 +246,9 @@ class DatabaseChangeDetector:
         
         return changes
     
-    async def _detect_updates(self, table_name: str, old_snapshot: TableSnapshot, new_snapshot: TableSnapshot) -> List[Change]:
-        """Detect UPDATE operations"""
-        changes = []
-        ibis_table = self.backend.table(table_name)
-        
-        updated_rows = []
-        
-        # Optimization: Use updated_at column if available
-        if old_snapshot.max_updated_at is not None and new_snapshot.max_updated_at is not None:
-            if new_snapshot.max_updated_at > old_snapshot.max_updated_at:
-                try:
-                    # Rows modified since last snapshot
-                    # We filter out new inserts by checking id <= old_max_id if available
-                    query = ibis_table.filter(ibis_table['updated_at'] > old_snapshot.max_updated_at)
-                    
-                    if old_snapshot.max_id is not None:
-                        query = query.filter(ibis_table['id'] <= old_snapshot.max_id)
-                        
-                    updated_rows_table = query.to_pyarrow()
-                    updated_rows = updated_rows_table.to_pylist()
-                except Exception as e:
-                    print(f"Error fetching incremental updates: {e}")
-
-        if updated_rows:
-            for row in updated_rows:
-                changes.append(Change(
-                    table=table_name,
-                    type='UPDATE',
-                    old_row=None, # Cannot easily fetch old row without audit log
-                    new_row=row
-                ))
-        else:
-            # Fallback: simple placeholder if we can't identify specific rows
-            changes.append(Change(
-                table=table_name,
-                type='UPDATE',
-                old_row={"_change_type": "detected_update_placeholder", "_timestamp": time.time()},
-                new_row={"_change_type": "detected_update_placeholder", "_timestamp": time.time()}
-            ))
-        
-        return changes
-    
     async def get_change_stream(self, table_name: str, poll_interval: float = 1.0) -> AsyncGenerator[Change, None]:
         """Generate a stream of changes for a table using polling"""
-        if table_name not in self.change_queues:
+        if table_name not in self.table_snapshots:
             await self.start_tracking_table(table_name)
         
         while True:
@@ -237,40 +256,7 @@ class DatabaseChangeDetector:
             for change in changes:
                 yield change
             await asyncio.sleep(poll_interval)
-    
-    async def track_table_changes(self, table_name: str, callback_func=None) -> AsyncGenerator[Change, None]:
-        """Continuously track and yield changes for a table"""
-        async for change in self.get_change_stream(table_name):
-            if callback_func:
-                try:
-                    await callback_func(change)
-                except Exception as e:
-                    print(f"Error in change callback: {e}")
-            yield change
 
 
-class DatabaseChangeProducer:
-    """Produces change streams for multiple tables"""
-
-    def __init__(self, backend):
-        self.backend = backend  # This should be a DuckDBBackend instance
-        self.detector = DatabaseChangeDetector(backend)
-        self.table_trackers = {}
-        
-    async def setup_change_stream(self, table_name: str) -> AsyncGenerator[Change, None]:
-        """Set up a change stream for a specific table"""
-        return self.detector.track_table_changes(table_name)
-    
-    async def register_table_for_cdc(self, table_name: str, callback_func=None):
-        """Register a table for CDC tracking"""
-        tracker_task = asyncio.create_task(
-            self._track_table(table_name, callback_func)
-        )
-        self.table_trackers[table_name] = tracker_task
-        return tracker_task
-    
-    async def _track_table(self, table_name: str, callback_func):
-        """Internal method to track a table"""
-        async for change in self.detector.track_table_changes(table_name, callback_func):
-            # This will continuously yield changes
-            pass  # The changes are handled by the callback
+# Alias for backward compatibility if needed, though manager should be updated
+DatabaseChangeDetector = PollingCDCProvider

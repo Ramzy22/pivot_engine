@@ -4,6 +4,10 @@ config.py - Configuration for the scalable pivot engine
 import os
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, field
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if present
+load_dotenv()
 
 
 @dataclass
@@ -122,7 +126,8 @@ class ConfigManager:
     
     def load_config(self, config_source: Optional[str] = None) -> ScalablePivotConfig:
         """Load configuration from various sources"""
-        if config_source == 'env':
+        # Default to loading from env if no source specified or explicit 'env'
+        if config_source == 'env' or config_source is None:
             self.config = ScalablePivotConfig().from_env()
         else:
             self.config = ScalablePivotConfig()

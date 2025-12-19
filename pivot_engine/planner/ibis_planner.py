@@ -18,6 +18,7 @@ except ImportError:
 
 from pivot_engine.types.pivot_spec import PivotSpec, Measure, GroupingConfig, PivotConfig, DrillPath
 from pivot_engine.common.ibis_expression_builder import IbisExpressionBuilder
+from pivot_engine.planner.expression_parser import SafeExpressionParser
 # Import MaterializedHierarchyManager type for type hinting if needed (avoid circular import if possible)
 # from pivot_engine.materialized_hierarchy_manager import MaterializedHierarchyManager 
 
@@ -113,6 +114,7 @@ class IbisPlanner:
         self.cost_estimator = CostEstimator()
         self.query_rewriter = QueryRewriter()
         self.builder = IbisExpressionBuilder(con)
+        self.parser = SafeExpressionParser()
 
         # Detect the backend database type for feature compatibility
         self._database_type = self._detect_database_type()
@@ -440,63 +442,9 @@ class IbisPlanner:
     def _parse_custom_expression(self, expression: str, alias_map: Dict[str, Any], table: IbisTable) -> Any:
         """
         Parses a user-defined string expression and returns an Ibis expression.
-        Supports basic arithmetic (+, -, *, /) and referencing other measure aliases.
-        
-        Args:
-            expression: The formula string, e.g., "sales - costs" or "(sales / revenue) * 100"
-            alias_map: Dictionary of available measure aliases -> Ibis expressions.
-            table: The source Ibis table (for referencing raw columns directly if needed, 
-                   though usually measures are preferred).
+        Uses SafeExpressionParser to safely evaluate AST.
         """
-        # Security: Do NOT use eval() directly on user input without strict sanitization.
-        # We will use a tokenizer to identify variables and operators.
-        
-        # 1. Identify all tokens that look like variables (alphanumeric + underscores)
-        # We assume aliases don't start with numbers.
-        import re
-        tokens = re.split(r'(\s+|[+\-*/()<>!=,])', expression)
-        
-        # 2. Rebuild the expression by substituting variables with Ibis objects
-        # Since we can't easily construct the Ibis expression via string manipulation + eval safely,
-        # we will use a simplified evaluation strategy:
-        # - Identify all valid variable names.
-        # - Ensure they exist in alias_map.
-        # - Use a limited scope eval() where the context ONLY contains the mapped Ibis expressions
-        #   and whitelisted functions/constants.
-        
-        safe_context = {}
-        
-        # Populate context with measure aliases
-        for name, expr in alias_map.items():
-            safe_context[name] = expr
-            
-        # Also allow raw columns if they are numeric? 
-        # For now, let's restrict to measures to enforce "aggregation first" logic
-        # unless it's a raw column that will be auto-aggregated (risky).
-        
-        # Check for unknown tokens
-        variable_pattern = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
-        
-        for token in tokens:
-            token = token.strip()
-            if not token:
-                continue
-            if variable_pattern.match(token):
-                if token not in safe_context and token not in ('div', 'mul', 'add', 'sub'): # constants/functions
-                    # If it's a number, it's fine. If it's a known operator, fine.
-                    # If it's not in the map, it's an error.
-                    # WAIT: is it a keyword like 'sum'? 
-                    # We only support arithmetic on aliases for now.
-                    raise ValueError(f"Unknown field or alias '{token}' in expression. Only defined measures can be referenced.")
-
-        # 3. Evaluate safely
-        # We assume the user expression syntax is compatible with Python's operator syntax (which Ibis uses).
-        try:
-            # We trust the Ibis expression overrides for operators
-            result = eval(expression, {"__builtins__": None}, safe_context)
-            return result
-        except Exception as e:
-            raise ValueError(f"Failed to evaluate expression '{expression}': {e}")
+        return self.parser.evaluate(expression, alias_map)
 
 
     def _plan_grouping_sets(self, spec: PivotSpec, include_metadata: bool) -> Dict[str, Any]:
@@ -576,6 +524,10 @@ class IbisPlanner:
         """
         Plan for pivot transformation with dynamic columns using Ibis expressions.
         """
+        if not spec.columns:
+            # If no columns to pivot, treat as standard aggregation plan
+            return self._plan_standard(spec, None, None, include_metadata)
+
         top_n = 50 
         column_cursor = None
         if spec.pivot_config:

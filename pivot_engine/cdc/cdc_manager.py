@@ -1,9 +1,9 @@
 import asyncio
 import time
-from typing import AsyncGenerator, Any, Dict, List, Optional
+from typing import AsyncGenerator, Any, Dict, List, Optional, Union
 import ibis
 from pivot_engine.streaming.streaming_processor import IncrementalMaterializedViewManager
-from pivot_engine.cdc.database_change_detector import TableSnapshot, DatabaseChangeDetector
+from pivot_engine.cdc.database_change_detector import TableSnapshot, PollingCDCProvider, PushCDCProvider, CDCProvider
 from pivot_engine.cdc.models import Change
 
 
@@ -13,7 +13,7 @@ class PivotCDCManager:
         Initialize CDC Manager.
         
         Args:
-            database: An Ibis connection object (e.g., ibis.duckdb.connect(), ibis.postgres.connect())
+            database: An Ibis connection object
             change_stream: Optional stream of changes for testing or external source
         """
         self.database = database
@@ -22,29 +22,42 @@ class PivotCDCManager:
         self.running = False
         self.change_processors = []
         self.materialized_view_managers = {}
-        self.database_change_detector = DatabaseChangeDetector(database) # Use the dedicated detector
+        
+        # Default to polling provider
+        self.provider: CDCProvider = PollingCDCProvider(database)
+        self.provider_type = "polling"
 
-    async def setup_cdc(self, table_name: str):
+    def use_push_provider(self):
+        """Switch to Push-based CDC provider"""
+        self.provider = PushCDCProvider()
+        self.provider_type = "push"
+        print("Switched to Push-based CDC provider")
+
+    async def push_change(self, table_name: str, change: Change):
+        """Push a change into the system (only works if Push provider is active)"""
+        if isinstance(self.provider, PushCDCProvider):
+            await self.provider.push_change(table_name, change)
+        else:
+            print(f"Warning: Cannot push change, current provider is {self.provider_type}")
+
+    async def setup_cdc(self, table_name: str, stream_override=None):
         """Set up CDC for a specific table"""
         # Create a changes tracking table if it doesn't exist
         changes_table_name = f"{table_name}_changes_tracking"
         
         # Define the schema for the tracking table using Ibis types
         schema = ibis.schema([
-            ('id', 'int64'), # Use BIGINT
-            ('operation', 'string'), # Use VARCHAR
-            ('timestamp', 'timestamp'), # Use TIMESTAMP
-            ('processed', 'boolean') # Use BOOLEAN
+            ('id', 'int64'),
+            ('operation', 'string'),
+            ('timestamp', 'timestamp'),
+            ('processed', 'boolean')
         ])
         
         try:
-            # Check if table exists before creating to replicate "IF NOT EXISTS"
-            # Ibis list_tables() works across backends
             if changes_table_name not in self.database.list_tables():
                 self.database.create_table(changes_table_name, schema)
         except Exception as e:
             # Some backends might raise if table exists or permission issues
-            print(f"Could not create changes tracking table '{changes_table_name}': {e}")
             pass
 
         # Initialize checkpoint data
@@ -54,7 +67,13 @@ class PivotCDCManager:
             'active': True,
             'tracking_table': changes_table_name
         }
-        await self.database_change_detector.start_tracking_table(table_name) # Start detector for this table
+        
+        # Start provider for this table
+        await self.provider.start_tracking_table(table_name)
+        
+        # If an override stream is provided (e.g. for testing), we can use it?
+        # The original code returned self from this method, let's keep that API.
+        return self
 
     def register_materialized_view_manager(self, table_name: str, manager: IncrementalMaterializedViewManager):
         """Register a materialized view manager to receive change notifications"""
@@ -71,30 +90,21 @@ class PivotCDCManager:
         if not self.running:
             self.running = True
 
-        if self.change_stream:
-            # Use predefined stream if available (e.g., for testing)
-            async for change in self.change_stream:
-                if change.table == table_name and self.checkpoints.get(table_name, {}).get('active', False):
-                    await self._process_change(change)
-                    await self._update_affected_cache_keys(change)
-                    await self._update_materialized_views(change)
-                    for processor in self.change_processors:
-                        try:
-                            await processor(change)
-                        except Exception as e:
-                            print(f"Error in change processor: {e}")
-        else:
-            # Use the DatabaseChangeDetector for polling-based changes
-            async for change in self.database_change_detector.get_change_stream(table_name):
-                if self.checkpoints.get(table_name, {}).get('active', False):
-                    await self._process_change(change)
-                    await self._update_affected_cache_keys(change)
-                    await self._update_materialized_views(change)
-                    for processor in self.change_processors:
-                        try:
-                            await processor(change)
-                        except Exception as e:
-                            print(f"Error in change processor: {e}")
+        stream_source = self.change_stream if self.change_stream else self.provider.get_change_stream(table_name)
+
+        async for change in stream_source:
+            if not self.running:
+                break
+                
+            if self.checkpoints.get(table_name, {}).get('active', False):
+                await self._process_change(change)
+                await self._update_affected_cache_keys(change)
+                await self._update_materialized_views(change)
+                for processor in self.change_processors:
+                    try:
+                        await processor(change)
+                    except Exception as e:
+                        print(f"Error in change processor: {e}")
 
     async def _process_change(self, change: Change):
         """Process individual changes and update pivot structures"""
@@ -152,10 +162,12 @@ class PivotCDCManager:
             if hasattr(cache, '_find_and_invalidate_affected_cache_keys'):
                 await cache._find_and_invalidate_affected_cache_keys(change.table)
             else:
-                print(f"Warning: Cache backend does not support granular invalidation. Full table cache will be cleared.")
                 # Fallback to clearing table cache if granular invalidation is not supported
                 if hasattr(cache, 'clear_table_cache'):
-                    await cache.clear_table_cache(change.table) if asyncio.iscoroutinefunction(cache.clear_table_cache) else cache.clear_table_cache(change.table)
+                    if asyncio.iscoroutinefunction(cache.clear_table_cache):
+                        await cache.clear_table_cache(change.table)
+                    else:
+                        cache.clear_table_cache(change.table)
 
     async def _update_materialized_views(self, change: Change):
         """Update materialized views based on changes"""
@@ -171,6 +183,10 @@ class PivotCDCManager:
     def stop_tracking(self):
         """Stop the CDC tracking"""
         self.running = False
+        if self.provider:
+            # We would need to stop all tracked tables on provider, but provider API is per-table
+            # For now, just setting running=False stops the loop in track_changes
+            pass
 
     def get_cdc_status(self, table_name: str) -> Dict[str, Any]:
         """Get the status of CDC for a specific table"""

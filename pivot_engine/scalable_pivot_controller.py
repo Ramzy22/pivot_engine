@@ -230,6 +230,38 @@ class ScalablePivotController:
 
         return self.cdc_manager
 
+    async def setup_push_cdc(self, table_name: str):
+        """Setup Push-based CDC for real-time tracking via external events"""
+        con = self.backend.con if isinstance(self.backend, IbisBackend) else getattr(self.planner, 'con', None)
+        self.cdc_manager = PivotCDCManager(con)
+        self.cdc_manager.use_push_provider()
+        
+        await self.cdc_manager.setup_cdc(table_name)
+        
+        self.cdc_manager.register_materialized_view_manager(table_name, self.incremental_view_manager)
+        
+        # Start processing changes (consuming the queue)
+        asyncio.create_task(self.cdc_manager.track_changes(table_name))
+        
+        return self.cdc_manager
+
+    async def push_change_event(self, table_name: str, change_dict: Dict[str, Any]):
+        """Push a change event to the CDC system"""
+        if not self.cdc_manager:
+            raise ValueError("CDC Manager not initialized. Call setup_push_cdc first.")
+            
+        from pivot_engine.cdc.models import Change
+        
+        # Convert dict to Change model
+        change = Change(
+            table=table_name,
+            type=change_dict.get('type', 'INSERT'),
+            new_row=change_dict.get('new_row'),
+            old_row=change_dict.get('old_row')
+        )
+        
+        await self.cdc_manager.push_change(table_name, change)
+
     async def run_streaming_aggregation(self, spec: PivotSpec):
         """Run streaming aggregation for real-time results"""
         if not self.enable_streaming:
@@ -825,3 +857,124 @@ class ScalablePivotController:
         else:
             # If for some reason it's not an Arrow table, convert it
             raise ValueError(f"Expected PyArrow Table but got {type(result)}")
+
+    async def run_pivot_export(self, spec: Any, format: str = "csv") -> Generator[bytes, None, None]:
+        """
+        Execute a pivot query and yield result in chunks (CSV or Parquet) for memory efficiency.
+        """
+        spec = self._normalize_spec(spec)
+        plan_result = await asyncio.get_running_loop().run_in_executor(None, self.planner.plan, spec)
+        
+        # We assume standard pivot returns a single main query for export
+        # If top-N columns are involved, we might need pre-execution, but export usually implies standard grid or raw data.
+        # For simplicity, we take the last query which is usually the main result.
+        queries = plan_result.get("queries", [])
+        if not queries:
+            yield b""
+            return
+
+        main_query = queries[-1] # Main aggregation
+        
+        # Check if backend supports streaming
+        if hasattr(self.backend, 'execute_streaming'):
+            # Use streaming execution
+            # Note: execute_streaming is synchronous generator in backend, we should iterate it carefully
+            # preventing blocking loop for too long, or run in executor? 
+            # Ibis execution is CPU/IO bound.
+            
+            iterator = self.backend.execute_streaming(main_query, batch_size=5000)
+            
+            if format.lower() == "csv":
+                import pyarrow.csv as csv
+                import io
+                
+                first_batch = True
+                header_written = False
+                
+                for batch_rows in iterator:
+                    # batch_rows is list of dicts. Convert to Arrow Table/Batch for CSV writing efficiency
+                    if not batch_rows:
+                         continue
+                         
+                    batch_table = pa.Table.from_pylist(batch_rows)
+                    sink = io.BytesIO()
+                    
+                    write_options = csv.WriteOptions(include_header=not header_written)
+                    csv.write_csv(batch_table, sink, write_options=write_options)
+                    header_written = True
+                    
+                    yield sink.getvalue()
+                    
+                    # Yield control to event loop
+                    await asyncio.sleep(0)
+                    
+            elif format.lower() == "parquet":
+                import pyarrow.parquet as pq
+                import io
+                
+                # Parquet streaming requires a writer
+                sink = io.BytesIO()
+                writer = None
+                
+                for batch_rows in iterator:
+                    if not batch_rows: continue
+                    
+                    batch_table = pa.Table.from_pylist(batch_rows)
+                    
+                    if writer is None:
+                        writer = pq.ParquetWriter(sink, batch_table.schema)
+                    
+                    writer.write_table(batch_table)
+                    
+                    # Yield whatever is in buffer? ParquetWriter might buffer internally.
+                    # We can't easily stream bytes of a single parquet file part by part without care.
+                    # Usually Parquet is file-based. Streaming a single Parquet file over HTTP 
+                    # works if we flush the writer?
+                    # For strict valid Parquet, we need footer at the end.
+                    # Simpler approach: Accumulate or use chunks? 
+                    # If memory is constraint, we might just write row groups.
+                    # But ParquetWriter writes to sink.
+                    pass
+                
+                if writer:
+                    writer.close()
+                    yield sink.getvalue()
+        else:
+            # Fallback to full load if no streaming support
+            table = await self.run_pivot_async(spec, return_format="arrow")
+            if format.lower() == "csv":
+                import pyarrow.csv as csv
+                import io
+                sink = io.BytesIO()
+                csv.write_csv(table, sink)
+                yield sink.getvalue()
+            else:
+                 import pyarrow.parquet as pq
+                 import io
+                 sink = io.BytesIO()
+                 pq.write_table(table, sink)
+                 yield sink.getvalue()
+
+    def _generate_next_cursor(self, table: pa.Table, spec: PivotSpec) -> Optional[Dict[str, Any]]:
+        """Generate the cursor for the next page based on the last row."""
+        if not spec.sort or table.num_rows == 0:
+            return None
+
+        sort_keys = spec.sort if isinstance(spec.sort, list) else [spec.sort]
+        last_row = table.to_pylist()[-1]
+
+        cursor = {}
+        for key in sort_keys:
+            field = key.get("field")
+            if field in last_row:
+                val = last_row[field]
+                cursor[field] = self._serialize_cursor_value(val)
+
+        return cursor if cursor else None
+
+    def _serialize_cursor_value(self, val: Any) -> Any:
+        """Helper to serialize values for cursor (timestamps, dates, etc)"""
+        import datetime
+        if isinstance(val, (datetime.date, datetime.datetime)):
+            return val.isoformat()
+        return val

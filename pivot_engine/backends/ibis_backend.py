@@ -105,6 +105,7 @@ class IbisBackend:
         # Track query stats
         self._query_count = 0
         self._total_time = 0.0
+        self._running_queries = {}  # Map task_id -> task object for cancellation
 
     def execute(self, query: Union[Dict[str, Any], str], params: Optional[List[Any]] = None, return_arrow: bool = True) -> Union[pa.Table, List[Dict[str, Any]]]:
         """
@@ -178,7 +179,34 @@ class IbisBackend:
         """
         import asyncio
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self.execute, query, params, return_arrow)
+        
+        # Create the task
+        task = loop.run_in_executor(None, self.execute, query, params, return_arrow)
+        task_id = id(task)
+        self._running_queries[task_id] = task
+        
+        try:
+            return await task
+        except asyncio.CancelledError:
+            print(f"Query task {task_id} cancelled")
+            # We can't easily kill the thread, but we stop waiting for it
+            raise
+        finally:
+            if task_id in self._running_queries:
+                del self._running_queries[task_id]
+
+    async def cancel_query(self, query_id: int):
+        """
+        Attempt to cancel a running query.
+        For thread-based execution, this just cancels the asyncio waiter.
+        True database-level cancellation depends on backend capabilities.
+        """
+        if query_id in self._running_queries:
+            task = self._running_queries[query_id]
+            task.cancel()
+            print(f"Cancelled query task {query_id}")
+            return True
+        return False
 
     def execute_arrow(
         self,

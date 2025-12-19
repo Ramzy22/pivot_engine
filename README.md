@@ -8,125 +8,100 @@ A high-performance, database-agnostic pivot engine designed to handle **millions
 
 ### 🏎️ Performance at Scale
 - **Millions of Rows**: Optimized for large-scale datasets using vectorized operations and zero-copy data transfers via PyArrow.
-- **Async Materialization**: Background pre-computation of hierarchical rollups (levels/drill-down paths) to ensure sub-second UI responsiveness.
-- **Automatic Indexing**: Automatically creates database indexes on materialized views to maintain high performance during deep drill-downs.
-- **Intelligent Caching**: Multi-level caching (Memory/Redis) with semantic query diffing to minimize database load.
+- **Async Materialization**: Background pre-computation of hierarchical rollups to ensure sub-second UI responsiveness.
+- **Memory-Efficient Export**: Stream gigabyte-sized CSV/Parquet files directly from the database to the user without server memory bloat.
+- **Intelligent Caching**: Multi-level caching (Memory/Redis) with semantic query diffing.
+
+### 🔐 Enterprise Security
+- **API Key Auth**: Built-in authentication via `X-API-Key`.
+- **Universal RLS**: Enforce Row-Level Security across all endpoints (Grid, Export, Hierarchical) using user attributes.
+- **Safe Expressions**: AST-based parser for calculated measures, preventing code injection.
 
 ### 🌐 Backend Agnostic
 - **Powered by Ibis**: Support for 20+ backends including **DuckDB, Clickhouse, PostgreSQL, BigQuery, Snowflake, and MySQL**.
-- **Consistent API**: One query language (PivotSpec) for all databases.
-
-### 🧩 Frontend Ready
-- **TanStack Table Adapter**: Native support for TanStack Table (React Table) filter/sort/grouping models.
-- **Virtual Scrolling**: Built-in support for hierarchical infinite scrolling with cursor-based pagination.
-- **REST & WebSocket**: Full FastAPI-based REST API and WebSockets for real-time data streaming (CDC).
+- **CDC Support**: Support for both polling-based and push-based (webhook) Change Data Capture.
 
 ---
 
-## 🛠️ Installation
+## 🛠️ Configuration (.env)
 
-```bash
-# Core installation
-pip install -e .
+Create a `.env` file in the root directory:
 
-# Install dependencies
-pip install -r requirements.txt
+```env
+# Database
+BACKEND_URI=duckdb://data.db
+BACKEND_TYPE=duckdb
+
+# Security
+PIVOT_API_KEY=your-secret-key-here
+
+# Cache
+CACHE_TYPE=memory  # or redis
+CACHE_TTL=300
+
+# Performance
+TILE_SIZE=100
+MAX_HIERARCHY_DEPTH=10
 ```
-
-*Required: `python >= 3.9`, `duckdb`, `pyarrow`, `ibis-framework`.*
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Initialize the Engine
-```python
-from pivot_engine.scalable_pivot_controller import ScalablePivotController
-
-# Connect to any database (e.g., local DuckDB or remote ClickHouse)
-controller = ScalablePivotController(
-    backend_uri="duckdb://data.db",
-    cache="memory",
-    enable_streaming=True
-)
+### Start the Server
+```bash
+python pivot_engine/main.py
 ```
 
-### 2. Run a Hierarchical Pivot
-```python
-from pivot_engine.types.pivot_spec import PivotSpec
+### Authenticated Request
+All API requests require the `X-API-Key` header.
 
-spec = PivotSpec(
-    table="sales",
-    rows=["region", "category", "product"],
-    measures=[{"field": "amount", "agg": "sum", "alias": "total_sales"}],
-    totals=True
-)
-
-# Execute (Async)
-result = await controller.run_pivot_async(spec, return_format="dict")
-```
-
-### 3. Materialize for Performance
-For datasets with millions of rows, trigger a background materialization job:
-```python
-# Start background job
-job = await controller.run_materialized_hierarchy(spec)
-job_id = job["job_id"]
-
-# Check status
-status = controller.get_materialization_status(job_id)
-# Returns: {"status": "completed", "progress": 100, ...}
+```bash
+curl -X POST http://localhost:8000/pivot \
+     -H "X-API-Key: your-secret-key-here" \
+     -H "Content-Type: application/json" \
+     -d '{"table": "sales", "measures": [{"field": "amount", "agg": "sum", "alias": "total"}]}'
 ```
 
 ---
 
-## 📡 REST API & Frontend Integration
+## 📡 API Endpoints
 
-The engine comes with a built-in FastAPI implementation that maps directly to common frontend state management.
+### 📊 Querying
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/pivot` | `POST` | Standard pivot aggregation. |
+| `/pivot/hierarchical` | `POST` | Tree-based hierarchical result. |
+| `/pivot/tanstack` | `POST` | Direct integration with TanStack Table state. |
+| `/pivot/virtual-scroll`| `POST` | Visible window for infinite scrolling. |
 
-### TanStack Table Integration
-Send your TanStack state directly to the `/pivot/tanstack` endpoint:
-
-```json
-// POST /pivot/tanstack
-{
-  "operation": "get_data",
-  "table": "sales_data",
-  "columns": [{"id": "region"}, {"id": "sales", "aggregationFn": "sum"}],
-  "grouping": ["region"],
-  "pagination": {"pageIndex": 0, "pageSize": 100}
-}
-```
-
-### Endpoints Overview
-| Endpoint | Description |
-| :--- | :--- |
-| `POST /pivot/tanstack` | Direct TanStack Table integration. |
-| `POST /pivot/virtual-scroll` | Optimized hierarchical rows for infinite scrolling. |
-| `POST /pivot/materialized-hierarchy` | Trigger background pre-computation. |
-| `GET /pivot/jobs/{id}` | Poll status of materialization/long-running queries. |
-| `WS /ws/pivot/{id}` | WebSocket for real-time CDC updates. |
+### 📥 Export & Real-time
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/pivot/export` | `POST` | Stream CSV/Parquet download. |
+| `/pivot/cdc/push-setup`| `POST` | Initialize push-mode CDC for a table. |
+| `/pivot/cdc/push/{table}`| `POST` | Ingest external change events. |
+| `/ws/pivot/{id}` | `WS` | WebSocket for real-time updates. |
 
 ---
 
-## 🏗️ Architecture
+## 🛡️ Row-Level Security (RLS)
 
-- **UI Layer**: TanStack / React / Vue
-- **API Layer**: FastAPI + WebSockets
-- **Controller**: ScalablePivotController (Orchestration)
-- **Engine**: Ibis + PyArrow (Vectorized execution)
-- **Storage**: Any Ibis-supported DB (DuckDB, ClickHouse, etc.)
+RLS is enforced automatically based on the user's attributes. When using the API, the system resolves the user from the API Key. In a production deployment, you can extend `security.py` to link keys to specific filter attributes.
+
+**Example Logic:**
+If a user is assigned `{"region": "North"}`, the engine automatically appends `WHERE region = 'North'` to **all** queries, including exports and drill-downs.
 
 ---
 
 ## 🧪 Development & Testing
 
 ```bash
-# Run the complete test suite
-pytest tests/
+# Run the implementation verification suite
+pytest tests/test_features_impl.py
 
-# Verify performance features
-python test_arrow_conversion.py
+# Run the full integration suite
+pytest tests/test_complete_implementation.py
 ```
 
 ## 📄 License

@@ -8,6 +8,7 @@ from enum import Enum
 import asyncio
 from pivot_engine.scalable_pivot_controller import ScalablePivotController
 from pivot_engine.types.pivot_spec import PivotSpec, Measure
+from pivot_engine.security import User, apply_rls_to_spec
 
 
 class TanStackOperation(str, Enum):
@@ -184,10 +185,14 @@ class TanStackPivotAdapter:
             total_rows=len(rows) if rows else 0
         )
     
-    async def handle_request(self, request: TanStackRequest) -> TanStackResponse:
+    async def handle_request(self, request: TanStackRequest, user: Optional[User] = None) -> TanStackResponse:
         """Handle a TanStack request directly"""
         # Convert request to pivot spec
         pivot_spec = self.convert_tanstack_request_to_pivot_spec(request)
+        
+        # Apply RLS if user is provided
+        if user:
+            pivot_spec = apply_rls_to_spec(pivot_spec, user)
         
         # Execute pivot operation asynchronously
         pivot_result = await self.controller.run_pivot_async(pivot_spec, return_format="dict")
@@ -326,6 +331,23 @@ class TanStackPivotAdapter:
             } for group_col in request.grouping]
         
         return tanstack_result
+
+    def get_invalidation_events(self, table_name: str, change_type: str) -> List[Dict[str, Any]]:
+        """
+        Generate invalidation events for TanStack Query.
+        This allows the frontend to know which queries to refetch.
+        """
+        # In a real app, this would be more granular based on the change
+        # For example, if we inserted a row with Region='North', we only invalidate queries filtering on 'North'
+        
+        events = [
+            {
+                "queryKey": ["pivot", table_name],
+                "type": "invalidate",
+                "reason": f"data_change_{change_type}"
+            }
+        ]
+        return events
 
 
 # Utility function for TanStack integration

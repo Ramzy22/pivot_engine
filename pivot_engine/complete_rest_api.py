@@ -3,14 +3,15 @@ complete_rest_api.py - Complete REST API for the scalable pivot engine
 Implements all missing endpoints to make the API complete
 """
 import asyncio
+import io
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, Depends, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from pivot_engine.scalable_pivot_controller import ScalablePivotController
 from pivot_engine.types.pivot_spec import PivotSpec
 from pivot_engine.config import get_config
-
+from pivot_engine.security import get_api_key, get_current_user, User, apply_rls_to_spec
 
 from pivot_engine.tanstack_adapter import TanStackPivotAdapter, TanStackRequest, TanStackOperation
 
@@ -58,6 +59,9 @@ class PivotSpecRequest(BaseModel):
     cursor: Optional[Dict[str, Any]] = None
     pivot_config: Optional[PivotConfigRequest] = None
 
+class ExportRequest(BaseModel):
+    spec: PivotSpecRequest
+    format: str = "csv"
 
 class TanStackRequestModel(BaseModel):
     """Pydantic model for TanStack request"""
@@ -113,7 +117,11 @@ class CompletePivotAPI:
     def __init__(self, controller: ScalablePivotController):
         self.controller = controller
         self.tanstack_adapter = TanStackPivotAdapter(controller)
-        self.app = FastAPI(title="Complete Scalable Pivot Engine API")
+        # Add security dependency globally to all routes
+        self.app = FastAPI(
+            title="Complete Scalable Pivot Engine API",
+            dependencies=[Depends(get_api_key)]
+        )
         self._setup_routes()
     
     def _setup_routes(self):
@@ -124,13 +132,16 @@ class CompletePivotAPI:
             return {"status": "healthy", "service": "scalable-pivot-engine", "version": "1.0"}
         
         @self.app.post("/pivot")
-        async def pivot_endpoint(request: PivotSpecRequest):
+        async def pivot_endpoint(request: PivotSpecRequest, user: User = Depends(get_current_user)):
             try:
                 # Convert Pydantic model to dict for controller
-                spec_dict = request.dict()
+                spec_dict = request.model_dump()
                 pivot_spec = PivotSpec.from_dict(spec_dict)
                 
-                result = self.controller.run_pivot(pivot_spec, return_format="dict")
+                # Apply RLS
+                pivot_spec = apply_rls_to_spec(pivot_spec, user)
+                
+                result = await self.controller.run_pivot_async(pivot_spec, return_format="dict")
                 
                 return APIResponse(
                     status="success",
@@ -139,8 +150,29 @@ class CompletePivotAPI:
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
 
+        @self.app.post("/pivot/export")
+        async def export_endpoint(request: ExportRequest, user: User = Depends(get_current_user)):
+            try:
+                spec_dict = request.spec.model_dump()
+                pivot_spec = PivotSpec.from_dict(spec_dict)
+                pivot_spec = apply_rls_to_spec(pivot_spec, user)
+                
+                # Get the stream from controller
+                stream = await self.controller.run_pivot_export(pivot_spec, format=request.format)
+                
+                media_type = "text/csv" if request.format.lower() == "csv" else "application/octet-stream"
+                filename = f"export.{request.format.lower()}"
+                
+                return StreamingResponse(
+                    stream, 
+                    media_type=media_type,
+                    headers={"Content-Disposition": f"attachment; filename={filename}"}
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
         @self.app.post("/pivot/tanstack")
-        async def tanstack_endpoint(request: TanStackRequestModel):
+        async def tanstack_endpoint(request: TanStackRequestModel, user: User = Depends(get_current_user)):
             try:
                 # Convert Pydantic model to TanStackRequest dataclass
                 ts_request = TanStackRequest(
@@ -155,7 +187,7 @@ class CompletePivotAPI:
                     global_filter=request.global_filter
                 )
                 
-                result = await self.tanstack_adapter.handle_request(ts_request)
+                result = await self.tanstack_adapter.handle_request(ts_request, user=user)
                 
                 # Convert result object to dict/json compatible format
                 return APIResponse(
@@ -166,10 +198,14 @@ class CompletePivotAPI:
                 raise HTTPException(status_code=500, detail=str(e))
         
         @self.app.post("/pivot/hierarchical")
-        async def hierarchical_endpoint(request: HierarchicalRequest):
+        async def hierarchical_endpoint(request: HierarchicalRequest, user: User = Depends(get_current_user)):
             try:
-                spec_dict = request.spec.dict()
+                spec_dict = request.spec.model_dump()
                 pivot_spec = PivotSpec.from_dict(spec_dict)
+                pivot_spec = apply_rls_to_spec(pivot_spec, user)
+                
+                # Update spec_dict with RLS changes
+                spec_dict = pivot_spec.to_dict()
                 
                 # Use controller's hierarchical method
                 result = self.controller.run_hierarchical_pivot(spec_dict)
@@ -182,10 +218,11 @@ class CompletePivotAPI:
                 raise HTTPException(status_code=500, detail=str(e))
         
         @self.app.post("/pivot/virtual-scroll")
-        async def virtual_scroll_endpoint(request: VirtualScrollRequest):
+        async def virtual_scroll_endpoint(request: VirtualScrollRequest, user: User = Depends(get_current_user)):
             try:
-                spec_dict = request.spec.dict()
+                spec_dict = request.spec.model_dump()
                 pivot_spec = PivotSpec.from_dict(spec_dict)
+                pivot_spec = apply_rls_to_spec(pivot_spec, user)
                 
                 # Use controller's virtual scroll method
                 result = self.controller.run_virtual_scroll_hierarchical(
@@ -208,10 +245,11 @@ class CompletePivotAPI:
                 raise HTTPException(status_code=500, detail=str(e))
         
         @self.app.post("/pivot/progressive-load")
-        async def progressive_load_endpoint(request: ProgressiveLoadRequest):
+        async def progressive_load_endpoint(request: ProgressiveLoadRequest, user: User = Depends(get_current_user)):
             try:
-                spec_dict = request.spec.dict()
+                spec_dict = request.spec.model_dump()
                 pivot_spec = PivotSpec.from_dict(spec_dict)
+                pivot_spec = apply_rls_to_spec(pivot_spec, user)
                 
                 result = self.controller.run_progressive_hierarchical_load(
                     pivot_spec,
@@ -227,10 +265,11 @@ class CompletePivotAPI:
                 raise HTTPException(status_code=500, detail=str(e))
         
         @self.app.post("/pivot/materialized-hierarchy")
-        async def materialized_hierarchy_endpoint(request: PivotSpecRequest):
+        async def materialized_hierarchy_endpoint(request: PivotSpecRequest, user: User = Depends(get_current_user)):
             try:
-                spec_dict = request.dict()
+                spec_dict = request.model_dump()
                 pivot_spec = PivotSpec.from_dict(spec_dict)
+                pivot_spec = apply_rls_to_spec(pivot_spec, user)
                 
                 # Await the async method
                 result = await self.controller.run_materialized_hierarchy(pivot_spec)
@@ -254,10 +293,11 @@ class CompletePivotAPI:
                 raise HTTPException(status_code=500, detail=str(e))
         
         @self.app.post("/pivot/pruned-hierarchical")
-        async def pruned_hierarchical_endpoint(request: HierarchicalRequest):
+        async def pruned_hierarchical_endpoint(request: HierarchicalRequest, user: User = Depends(get_current_user)):
             try:
-                spec_dict = request.spec.dict()
+                spec_dict = request.spec.model_dump()
                 pivot_spec = PivotSpec.from_dict(spec_dict)
+                pivot_spec = apply_rls_to_spec(pivot_spec, user)
                 
                 result = self.controller.run_pruned_hierarchical_pivot(
                     pivot_spec,
@@ -273,13 +313,14 @@ class CompletePivotAPI:
                 raise HTTPException(status_code=500, detail=str(e))
         
         @self.app.post("/pivot/intelligent-prefetch")
-        async def intelligent_prefetch_endpoint(request: HierarchicalRequest):
+        async def intelligent_prefetch_endpoint(request: HierarchicalRequest, user: User = Depends(get_current_user)):
             try:
-                spec_dict = request.spec.dict()
+                spec_dict = request.spec.model_dump()
                 pivot_spec = PivotSpec.from_dict(spec_dict)
+                pivot_spec = apply_rls_to_spec(pivot_spec, user)
                 
                 # Mock session for demo - in real app, this would come from auth
-                user_session = {"user_id": "demo", "session_data": {}}
+                user_session = {"user_id": user.id, "session_data": {}}
                 
                 result = await self.controller.run_intelligent_prefetch(
                     pivot_spec,
@@ -295,10 +336,11 @@ class CompletePivotAPI:
                 raise HTTPException(status_code=500, detail=str(e))
         
         @self.app.post("/pivot/streaming-aggregation")
-        async def streaming_aggregation_endpoint(request: PivotSpecRequest):
+        async def streaming_aggregation_endpoint(request: PivotSpecRequest, user: User = Depends(get_current_user)):
             try:
-                spec_dict = request.dict()
+                spec_dict = request.model_dump()
                 pivot_spec = PivotSpec.from_dict(spec_dict)
+                pivot_spec = apply_rls_to_spec(pivot_spec, user)
                 
                 result = await self.controller.run_streaming_aggregation(pivot_spec)
                 
@@ -325,9 +367,53 @@ class CompletePivotAPI:
                 
                 cdc_manager = await self.controller.setup_cdc(request.table_name, mock_change_stream())
                 
+                # Bridge to WebSocket broadcast
+                async def broadcast_change(change):
+                    await self.broadcast_data_update(change.table, {
+                        "type": "change",
+                        "change": change.__dict__ if hasattr(change, '__dict__') else change
+                    })
+                
+                cdc_manager.register_change_processor(broadcast_change)
+                
                 return APIResponse(
                     status="success",
                     data={"message": f"CDC setup complete for {request.table_name}"}
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/pivot/cdc/push-setup")
+        async def cdc_push_setup_endpoint(request: CDCSetupRequest):
+            """Initialize CDC in Push mode for a table"""
+            try:
+                cdc_manager = await self.controller.setup_push_cdc(request.table_name)
+                
+                # Bridge to WebSocket broadcast
+                async def broadcast_change(change):
+                    await self.broadcast_data_update(change.table, {
+                        "type": "change",
+                        "change": change.__dict__ if hasattr(change, '__dict__') else change
+                    })
+                
+                cdc_manager.register_change_processor(broadcast_change)
+                
+                return APIResponse(
+                    status="success",
+                    data={"message": f"Push CDC setup complete for {request.table_name}"}
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/pivot/cdc/push/{table_name}")
+        async def cdc_push_endpoint(table_name: str, change: Dict[str, Any]):
+            """Push a change event to the CDC system"""
+            try:
+                # Expects dict with type, new_row, old_row
+                await self.controller.push_change_event(table_name, change)
+                return APIResponse(
+                    status="success",
+                    data={"message": "Change accepted"}
                 )
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
@@ -345,7 +431,7 @@ class CompletePivotAPI:
                 )
                 
                 try:
-                    sample_result = self.controller.run_pivot(spec, return_format="dict")
+                    sample_result = await self.controller.run_pivot_async(spec, return_format="dict")
                     columns = sample_result.get('columns', []) if sample_result else []
                 except:
                     columns = []  # Fallback to empty if table doesn't exist
@@ -376,9 +462,14 @@ class CompletePivotAPI:
                 raise HTTPException(status_code=500, detail=str(e))
         
         @self.app.post("/pivot/batch-load")
-        async def batch_load_endpoint(request: HierarchicalRequest):
+        async def batch_load_endpoint(request: HierarchicalRequest, user: User = Depends(get_current_user)):
             try:
-                spec_dict = request.spec.dict()
+                spec_dict = request.spec.model_dump()
+                pivot_spec = PivotSpec.from_dict(spec_dict)
+                pivot_spec = apply_rls_to_spec(pivot_spec, user)
+                
+                # Convert back to dict
+                spec_dict = pivot_spec.to_dict()
                 
                 result = self.controller.run_hierarchical_pivot_batch_load(
                     spec_dict,
@@ -398,14 +489,22 @@ class CompletePivotAPI:
         return self.app
 
 
-def create_complete_api(backend_uri: str = ":memory:"):
-    """Create a complete API with configured controller"""
+def create_complete_api(backend_uri: Optional[str] = None):
+    """
+    Create a complete API with configured controller.
+    Uses centralized configuration.
+    """
+    config = get_config()
+    
+    # Allow overriding backend_uri if provided, otherwise use config
+    uri = backend_uri or config.backend_uri
+    
     controller = ScalablePivotController(
-        backend_uri=backend_uri,
-        enable_streaming=True,
-        enable_incremental_views=True,
-        tile_size=100,
-        cache_ttl=300
+        backend_uri=uri,
+        enable_streaming=config.enable_streaming,
+        enable_incremental_views=config.enable_incremental_views,
+        tile_size=config.tile_size,
+        cache_ttl=config.default_cache_ttl
     )
     
     return CompletePivotAPI(controller)
@@ -486,14 +585,17 @@ class RealTimePivotAPI(CompletePivotAPI):
             del self.active_connections[conn_id]
 
 
-def create_realtime_api(backend_uri: str = ":memory:"):
+def create_realtime_api(backend_uri: Optional[str] = None):
     """Create real-time API with WebSocket support"""
+    config = get_config()
+    uri = backend_uri or config.backend_uri
+    
     controller = ScalablePivotController(
-        backend_uri=backend_uri,
-        enable_streaming=True,
-        enable_incremental_views=True,
-        tile_size=100,
-        cache_ttl=300
+        backend_uri=uri,
+        enable_streaming=config.enable_streaming,
+        enable_incremental_views=config.enable_incremental_views,
+        tile_size=config.tile_size,
+        cache_ttl=config.default_cache_ttl
     )
     
     return RealTimePivotAPI(controller)
@@ -508,6 +610,7 @@ async def example_usage():
     print("Complete REST API ready with all endpoints:")
     print("- /health")
     print("- /pivot")
+    print("- /pivot/export (New)")
     print("- /pivot/hierarchical") 
     print("- /pivot/virtual-scroll")
     print("- /pivot/progressive-load")
