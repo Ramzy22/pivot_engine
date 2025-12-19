@@ -188,15 +188,42 @@ class DatabaseChangeDetector:
     async def _detect_updates(self, table_name: str, old_snapshot: TableSnapshot, new_snapshot: TableSnapshot) -> List[Change]:
         """Detect UPDATE operations"""
         changes = []
+        ibis_table = self.backend.table(table_name)
         
-        # Since row counts are the same but data changed, we have updates
-        # In a real implementation, identify the specific rows that changed
-        changes.append(Change(
-            table=table_name,
-            type='UPDATE',
-            old_row={"_change_type": "detected_update", "_timestamp": time.time()},
-            new_row={"_change_type": "detected_update", "_timestamp": time.time()}
-        ))
+        updated_rows = []
+        
+        # Optimization: Use updated_at column if available
+        if old_snapshot.max_updated_at is not None and new_snapshot.max_updated_at is not None:
+            if new_snapshot.max_updated_at > old_snapshot.max_updated_at:
+                try:
+                    # Rows modified since last snapshot
+                    # We filter out new inserts by checking id <= old_max_id if available
+                    query = ibis_table.filter(ibis_table['updated_at'] > old_snapshot.max_updated_at)
+                    
+                    if old_snapshot.max_id is not None:
+                        query = query.filter(ibis_table['id'] <= old_snapshot.max_id)
+                        
+                    updated_rows_table = query.to_pyarrow()
+                    updated_rows = updated_rows_table.to_pylist()
+                except Exception as e:
+                    print(f"Error fetching incremental updates: {e}")
+
+        if updated_rows:
+            for row in updated_rows:
+                changes.append(Change(
+                    table=table_name,
+                    type='UPDATE',
+                    old_row=None, # Cannot easily fetch old row without audit log
+                    new_row=row
+                ))
+        else:
+            # Fallback: simple placeholder if we can't identify specific rows
+            changes.append(Change(
+                table=table_name,
+                type='UPDATE',
+                old_row={"_change_type": "detected_update_placeholder", "_timestamp": time.time()},
+                new_row={"_change_type": "detected_update_placeholder", "_timestamp": time.time()}
+            ))
         
         return changes
     

@@ -104,6 +104,13 @@ class TanStackPivotAdapter:
             page = request.pagination.get('pageIndex', 0)
             offset = page * page_size
             limit = page_size
+            
+        # Parse column_cursor from global_filter
+        column_cursor = None
+        if request.global_filter and request.global_filter.startswith("column_cursor:"):
+            column_cursor = request.global_filter.replace("column_cursor:", "", 1)
+            
+        from pivot_engine.types.pivot_spec import PivotConfig
         
         return PivotSpec(
             table=request.table,
@@ -113,7 +120,8 @@ class TanStackPivotAdapter:
             filters=pivot_filters,
             sort=pivot_sort,
             limit=limit,
-            totals=True  # Enable totals computation
+            totals=True,  # Enable totals computation
+            pivot_config=PivotConfig(enabled=True, column_cursor=column_cursor)
         )
     
     def _map_tanstack_operator(self, tanstack_op: str) -> str:

@@ -2,6 +2,9 @@
 MaterializedHierarchyManager - Pre-compute and store hierarchical rollups for common drill paths
 """
 import asyncio
+import json
+import os
+import time
 from typing import Dict, Any, List, Optional
 import ibis
 from ibis import BaseBackend as IbisBaseBackend
@@ -9,11 +12,30 @@ from pivot_engine.types.pivot_spec import PivotSpec
 
 
 class MaterializedHierarchyManager:
-    def __init__(self, backend: IbisBaseBackend, cache):
+    def __init__(self, backend: IbisBaseBackend, cache, registry_path: str = "materialized_registry.json"):
         self.backend = backend # Expects an Ibis connection
         self.cache = cache
-        self.rollup_tables = {}
+        self.registry_path = registry_path
+        self.rollup_tables = self._load_registry()
         self.jobs = {}  # job_id -> {status, progress, error, result}
+
+    def _load_registry(self) -> Dict[str, str]:
+        """Load rollup registry from disk."""
+        if os.path.exists(self.registry_path):
+            try:
+                with open(self.registry_path, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"Failed to load materialized registry: {e}")
+        return {}
+
+    def _save_registry(self):
+        """Save rollup registry to disk."""
+        try:
+            with open(self.registry_path, 'w') as f:
+                json.dump(self.rollup_tables, f)
+        except Exception as e:
+            print(f"Failed to save materialized registry: {e}")
 
     async def create_materialized_hierarchy_async(self, spec: PivotSpec) -> str:
         """
@@ -71,6 +93,8 @@ class MaterializedHierarchyManager:
                 
                 if job_id:
                     self.jobs[job_id]["progress"] = int((level / total_levels) * 100)
+            
+            self._save_registry()
 
             if job_id:
                 self.jobs[job_id]["status"] = "completed"
@@ -81,6 +105,21 @@ class MaterializedHierarchyManager:
             if job_id:
                 self.jobs[job_id]["status"] = "failed"
                 self.jobs[job_id]["error"] = str(e)
+
+    def cleanup_unused_rollups(self):
+        """
+        Cleanup all registered rollup tables.
+        In a real implementation, this would use access timestamps or a TTL.
+        For now, it clears everything to ensure clean state or manual maintenance.
+        """
+        for key, table_name in list(self.rollup_tables.items()):
+            try:
+                if table_name in self.backend.list_tables():
+                    self.backend.drop_table(table_name)
+                del self.rollup_tables[key]
+            except Exception as e:
+                print(f"Failed to drop rollup table {table_name}: {e}")
+        self._save_registry()
                 
     def _create_index_safely(self, table_name: str, columns: List[str]):
         """Helper to create indexes if the backend supports it"""

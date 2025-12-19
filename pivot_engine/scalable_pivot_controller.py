@@ -283,8 +283,10 @@ class ScalablePivotController:
         self._request_count += 1
         spec = self._normalize_spec(spec)
         
-        # Planning is fast and CPU bound, keep it sync for simplicity or offload if needed
-        plan_result = self.planner.plan(spec)
+        # Planning can be CPU-bound for complex queries, so we offload it
+        loop = asyncio.get_running_loop()
+        plan_result = await loop.run_in_executor(None, self.planner.plan, spec)
+        
         metadata = plan_result.get("metadata", {})
         
         if metadata.get("needs_column_discovery"):
