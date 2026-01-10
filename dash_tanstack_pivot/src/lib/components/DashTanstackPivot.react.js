@@ -2232,16 +2232,46 @@ export default function DashTanstackPivot(props) {
     };
 
     useEffect(() => {
-        if (layoutMode === 'hierarchy' && rowFields.length > 0) {
-            setColumnPinning(prev => {
-                if (!prev.left.includes('hierarchy')) {
-                     console.log('[DEBUG] Hierarchy Pinning Triggered');
-                     return { ...prev, left: ['hierarchy', ...prev.left] };
+        setColumnPinning(prev => {
+            let nextLeft = [...(prev.left || [])];
+            let changed = false;
+
+            // 1. Enforce Hierarchy Pinning
+            if (layoutMode === 'hierarchy' && rowFields.length > 0) {
+                if (!nextLeft.includes('hierarchy')) {
+                     nextLeft = ['hierarchy', ...nextLeft];
+                     changed = true;
                 }
-                return prev;
-            });
-        }
-    }, [layoutMode, rowFields.length]);
+            }
+
+            // 2. Enforce Row Number Pinning (User Request: Always utmost left)
+            if (showRowNumbers) {
+                if (!nextLeft.includes('__row_number__')) {
+                    nextLeft = ['__row_number__', ...nextLeft];
+                    changed = true;
+                }
+                // Ensure it is first (utmost left)
+                const idx = nextLeft.indexOf('__row_number__');
+                if (idx > 0) {
+                    nextLeft.splice(idx, 1);
+                    nextLeft.unshift('__row_number__');
+                    changed = true;
+                }
+            } else {
+                 // If hidden, remove from pinned? (Optional, but clean)
+                 if (nextLeft.includes('__row_number__')) {
+                     nextLeft = nextLeft.filter(id => id !== '__row_number__');
+                     changed = true;
+                 }
+            }
+
+            if (changed) {
+                console.log('[DEBUG] Pinning Enforcement Triggered', nextLeft);
+                return { ...prev, left: nextLeft };
+            }
+            return prev;
+        });
+    }, [layoutMode, rowFields.length, showRowNumbers]);
 
     // 4. FIXED: handleHeaderContextMenu with proper group detection
     const handleHeaderContextMenu = (e, colId) => {
@@ -2374,9 +2404,17 @@ export default function DashTanstackPivot(props) {
         const isSelected = selectedCells[key] !== undefined;
         
         // Only select if not already selected (to allow multi-cell context actions)
+        /* 
+           User Request: Right click should NOT remove current selection.
+           We disable the auto-select on right click for unselected cells.
+           The context menu will still operate on the clicked value (passed as arg),
+           but 'Copy Selection' will refer to the existing selection.
+        */
+        /*
         if (!isSelected && rowId) {
              setSelectedCells({ [key]: value });
         }
+        */
 
         const hasSelection = Object.keys(selectedCells).length > 0;
         
@@ -2619,7 +2657,7 @@ export default function DashTanstackPivot(props) {
                 id: '__row_number__',
                 header: '#',
                 size: 50,
-                enablePinning: true,
+                enablePinning: false, // User Request: Cannot be changed
                 cell: ({ row }) => (
                     <div
                         style={{
@@ -3561,9 +3599,9 @@ export default function DashTanstackPivot(props) {
                     header.column.toggleSorting(e.key === 'ArrowDown', e.shiftKey);
                 }
             }}
-            draggable={!isGroupHeader}
+            draggable={!isGroupHeader && header.column.id !== '__row_number__'}
             onDragStart={(e) => {
-                if (!isGroupHeader) {
+                if (!isGroupHeader && header.column.id !== '__row_number__') {
                     onDragStart(e, header.column.id, 'cols', -1);
                 }
             }}
