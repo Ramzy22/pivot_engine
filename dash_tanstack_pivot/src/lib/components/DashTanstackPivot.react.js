@@ -3120,7 +3120,7 @@ export default function DashTanstackPivot(props) {
     const rowHeight = rowHeights[spacingMode];
     
     const rowVirtualizer = useVirtualizer({
-        count: centerRows.length, getScrollElement: () => parentRef.current, estimateSize: () => rowHeight, overscan: 20
+        count: serverSide ? (rowCount || 0) : centerRows.length, getScrollElement: () => parentRef.current, estimateSize: () => rowHeight, overscan: 20
     });
     const virtualRows = rowVirtualizer.getVirtualItems();
 
@@ -3324,24 +3324,63 @@ export default function DashTanstackPivot(props) {
     const totalLayoutWidth = leftWidth + centerTotalWidth + rightWidth;
 
     // --- Progressive Data Loading ---
-    const viewportRange = virtualRows.length > 0 
-        ? `${virtualRows[0].index}-${virtualRows[virtualRows.length - 1].index}` 
-        : '';
+    const isInitializedRef = useRef(false);
+    const lastViewportRef = useRef(null);
+    const viewportDebounceRef = useRef(null);
 
     useEffect(() => {
-        if (!serverSide || !setPropsRef.current || virtualRows.length === 0) return;
+        if (!serverSide || !setPropsRef.current) return;
+
+        // Wait for data to be loaded before virtualizing
+        if (!tableData || tableData.length === 0) {
+            return;
+        }
+
+        // Wait for virtualRows to stabilize
+        if (virtualRows.length === 0) {
+            return;
+        }
 
         const start = virtualRows[0].index;
         const end = virtualRows[virtualRows.length - 1].index;
-        
-        const timer = setTimeout(() => {
-             setPropsRef.current({ 
-                viewport: { start, end, count: end - start + 1 } 
-             });
-        }, 100);
+        const count = end - start + 1;
 
-        return () => clearTimeout(timer);
-    }, [viewportRange, serverSide]);
+        // Create viewport signature
+        const viewportKey = `${start}-${end}-${count}`;
+
+        // Skip if viewport hasn't changed
+        if (lastViewportRef.current === viewportKey) {
+            return;
+        }
+
+        // Debounce viewport updates to prevent rapid firing
+        if (viewportDebounceRef.current) {
+            clearTimeout(viewportDebounceRef.current);
+        }
+
+        viewportDebounceRef.current = setTimeout(() => {
+            // Only send viewport updates if we have valid data
+            if (count > 0 && start >= 0 && end >= start) {
+                lastViewportRef.current = viewportKey;
+
+                // Only send viewport in server-side mode, don't modify data
+                if (isInitializedRef.current) {
+                    setPropsRef.current({
+                        viewport: { start, end, count }
+                    });
+                } else {
+                    // First load - just mark as initialized, don't send viewport
+                    isInitializedRef.current = true;
+                }
+            }
+        }, 100); // 100ms debounce
+
+        return () => {
+            if (viewportDebounceRef.current) {
+                clearTimeout(viewportDebounceRef.current);
+            }
+        };
+    }, [virtualRows, serverSide, tableData]);
 
 
     const getFieldZone = (id) => {
@@ -4469,10 +4508,36 @@ export default function DashTanstackPivot(props) {
 
                              {/* Center Virtualized Rows */}
                              {virtualRows.map(virtualRow => {
-                                 const row = centerRows[virtualRow.index];
-                                 const isExpandedRow = row.getIsExpanded();
                                  const headerHeight = (table.getHeaderGroups().length * rowHeight) + (showFloatingFilters ? rowHeight : 0);
                                  const topOffset = headerHeight + (topRows.length * rowHeight);
+                                 
+                                 let row = centerRows[virtualRow.index];
+                                 if (serverSide) {
+                                     const viewportStart = lastViewportRef.current ? parseInt(lastViewportRef.current.split('-')[0], 10) : 0;
+                                     const localIndex = Math.max(0, virtualRow.index - viewportStart);
+                                     row = centerRows[localIndex];
+                                 }
+
+                                 if (!row) {
+                                      return (
+                                         <div
+                                            key={virtualRow.index}
+                                            style={{
+                                             ...styles.row,
+                                             height: virtualRow.size,
+                                             top: `${virtualRow.start + topOffset}px`,
+                                             width: `${totalLayoutWidth}px`,
+                                             position: 'absolute',
+                                             background: theme.background,
+                                             borderBottom: `1px solid ${theme.border}`,
+                                             display: 'flex', alignItems: 'center', paddingLeft: '16px', color: theme.textSec
+                                         }}>
+                                             Loading...
+                                         </div>
+                                     );
+                                 }
+
+                                 const isExpandedRow = row.getIsExpanded();
 
                                  return (
                                      <div
