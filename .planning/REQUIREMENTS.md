@@ -131,23 +131,66 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| QUAL-01–04 | Phase 1 | Pending |
-| BUG-01–06 | Phase 2 | Pending |
-| BUG-07–13 | Phase 3 | Pending |
-| API-01–06 | Phase 4 | Pending |
-| FIELD-01–06 | Phase 5 | Pending |
-| DRILL-01–05 | Phase 6 | Pending |
-| EXPORT-01–04 | Phase 6 | Pending |
-| CODE-01–04 | Phase 7 | Pending |
-| PKG-01–05 | Phase 8 | Pending |
-| DOC-01–04 | Phase 8 | Pending |
-| CI-01–03 | Phase 8 | Pending |
+| QUAL-01 | Phase 1 - Test Audit & Baseline | Pending |
+| QUAL-02 | Phase 1 - Test Audit & Baseline | Pending |
+| BUG-01 | Phase 2 - Data Correctness Bugs | Pending |
+| BUG-02 | Phase 2 - Data Correctness Bugs | Pending |
+| BUG-03 | Phase 2 - Data Correctness Bugs | Pending |
+| BUG-04 | Phase 2 - Data Correctness Bugs | Pending |
+| BUG-05 | Phase 2 - Data Correctness Bugs | Pending |
+| BUG-06 | Phase 2 - Data Correctness Bugs | Pending |
+| BUG-07 | Phase 3 - Virtual Scroll & UI Bugs | Pending |
+| BUG-08 | Phase 3 - Virtual Scroll & UI Bugs | Pending |
+| BUG-09 | Phase 3 - Virtual Scroll & UI Bugs | Pending |
+| BUG-10 | Phase 3 - Virtual Scroll & UI Bugs | Pending |
+| BUG-11 | Phase 3 - Virtual Scroll & UI Bugs | Pending |
+| BUG-12 | Phase 3 - Virtual Scroll & UI Bugs | Pending |
+| BUG-13 | Phase 3 - Virtual Scroll & UI Bugs | Pending |
+| API-01 | Phase 4 - Data Input API | Pending |
+| API-02 | Phase 4 - Data Input API | Pending |
+| API-03 | Phase 4 - Data Input API | Pending |
+| API-04 | Phase 4 - Data Input API | Pending |
+| API-05 | Phase 4 - Data Input API | Pending |
+| API-06 | Phase 4 - Data Input API | Pending |
+| FIELD-01 | Phase 5 - Field Zone UI | Pending |
+| FIELD-02 | Phase 5 - Field Zone UI | Pending |
+| FIELD-03 | Phase 5 - Field Zone UI | Pending |
+| FIELD-04 | Phase 5 - Field Zone UI | Pending |
+| FIELD-05 | Phase 5 - Field Zone UI | Pending |
+| FIELD-06 | Phase 5 - Field Zone UI | Pending |
+| DRILL-01 | Phase 6 - Drill-Through & Excel Export | Pending |
+| DRILL-02 | Phase 6 - Drill-Through & Excel Export | Pending |
+| DRILL-03 | Phase 6 - Drill-Through & Excel Export | Pending |
+| DRILL-04 | Phase 6 - Drill-Through & Excel Export | Pending |
+| DRILL-05 | Phase 6 - Drill-Through & Excel Export | Pending |
+| EXPORT-01 | Phase 6 - Drill-Through & Excel Export | Pending |
+| EXPORT-02 | Phase 6 - Drill-Through & Excel Export | Pending |
+| EXPORT-03 | Phase 6 - Drill-Through & Excel Export | Pending |
+| EXPORT-04 | Phase 6 - Drill-Through & Excel Export | Pending |
+| CODE-01 | Phase 7 - Code Quality Refactor | Pending |
+| CODE-02 | Phase 7 - Code Quality Refactor | Pending |
+| CODE-03 | Phase 7 - Code Quality Refactor | Pending |
+| CODE-04 | Phase 7 - Code Quality Refactor | Pending |
+| QUAL-03 | Phase 7 - Code Quality Refactor | Pending |
+| QUAL-04 | Phase 7 - Code Quality Refactor | Pending |
+| PKG-01 | Phase 8 - Packaging, Docs & CI/CD | Pending |
+| PKG-02 | Phase 8 - Packaging, Docs & CI/CD | Pending |
+| PKG-03 | Phase 8 - Packaging, Docs & CI/CD | Pending |
+| PKG-04 | Phase 8 - Packaging, Docs & CI/CD | Pending |
+| PKG-05 | Phase 8 - Packaging, Docs & CI/CD | Pending |
+| DOC-01 | Phase 8 - Packaging, Docs & CI/CD | Pending |
+| DOC-02 | Phase 8 - Packaging, Docs & CI/CD | Pending |
+| DOC-03 | Phase 8 - Packaging, Docs & CI/CD | Pending |
+| DOC-04 | Phase 8 - Packaging, Docs & CI/CD | Pending |
+| CI-01 | Phase 8 - Packaging, Docs & CI/CD | Pending |
+| CI-02 | Phase 8 - Packaging, Docs & CI/CD | Pending |
+| CI-03 | Phase 8 - Packaging, Docs & CI/CD | Pending |
 
 **Coverage:**
 - v1 requirements: 47 total
 - Mapped to phases: 47
-- Unmapped: 0 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-13*
-*Last updated: 2026-03-13 after initial definition*
+*Last updated: 2026-03-13 after roadmap creation*
