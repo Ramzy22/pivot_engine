@@ -1,3 +1,19 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: planning
+stopped_at: Completed 01-test-audit-baseline/01-01-PLAN.md
+last_updated: "2026-03-13T16:49:20.287Z"
+last_activity: 2026-03-13 — Roadmap created, all 47 v1 requirements mapped to 8 phases
+progress:
+  total_phases: 8
+  completed_phases: 0
+  total_plans: 4
+  completed_plans: 1
+  percent: 25
+---
+
 # Project State
 
 ## Project Reference
@@ -14,7 +30,7 @@ Plan: 0 of TBD in current phase
 Status: Ready to plan
 Last activity: 2026-03-13 — Roadmap created, all 47 v1 requirements mapped to 8 phases
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [███░░░░░░░] 25%
 
 ## Performance Metrics
 
@@ -34,6 +50,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 01-test-audit-baseline P01 | 1 | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -45,6 +62,8 @@ Recent decisions affecting current work:
 - [Init]: Verify-before-develop constraint applied — run all 65 existing tests before touching any code
 - [Init]: Phase 1 is a read-only audit; no production code modified until baseline is established
 - [Init]: TanStack Table v8 + Ibis backend are locked (no swapping)
+- [Phase 01-test-audit-baseline]: sys.path.insert in conftest.py chosen over editable install to avoid touching pyproject.toml (Phase 8 concern)
+- [Phase 01-test-audit-baseline]: Empty git commit used for env-only Task 1 (pip install leaves no file to stage)
 
 ### Pending Todos
 
@@ -57,6 +76,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-13
-Stopped at: Roadmap created, STATE.md initialized. Ready to plan Phase 1.
+Last session: 2026-03-13T16:49:20.283Z
+Stopped at: Completed 01-test-audit-baseline/01-01-PLAN.md
 Resume file: None

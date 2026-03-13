@@ -9,8 +9,8 @@
 
 ### Quality Baseline
 
-- [ ] **QUAL-01**: All existing tests pass before any new development begins (establish green baseline)
-- [ ] **QUAL-02**: Test coverage report generated and baseline documented
+- [x] **QUAL-01**: All existing tests pass before any new development begins (establish green baseline)
+- [x] **QUAL-02**: Test coverage report generated and baseline documented
 - [ ] **QUAL-03**: Duplicate method `run_pivot_arrow()` in controller.py removed
 - [ ] **QUAL-04**: Column name sanitization secured against SQL injection
 
@@ -131,8 +131,8 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| QUAL-01 | Phase 1 - Test Audit & Baseline | Pending |
-| QUAL-02 | Phase 1 - Test Audit & Baseline | Pending |
+| QUAL-01 | Phase 1 - Test Audit & Baseline | Complete |
+| QUAL-02 | Phase 1 - Test Audit & Baseline | Complete |
 | BUG-01 | Phase 2 - Data Correctness Bugs | Pending |
 | BUG-02 | Phase 2 - Data Correctness Bugs | Pending |
 | BUG-03 | Phase 2 - Data Correctness Bugs | Pending |
