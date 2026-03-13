@@ -1,0 +1,210 @@
+============================= test session starts =============================
+collecting ... collected 63 items / 5 errors
+
+tests/test_frontend_contract.py::test_initial_load_hierarchy PASSED      [  1%]
+tests/test_frontend_contract.py::test_expansion_logic PASSED             [  3%]
+tests/test_frontend_contract.py::test_filtering PASSED                   [  4%]
+tests/test_frontend_contract.py::test_sorting PASSED                     [  6%]
+tests/test_frontend_filters.py::test_floating_filter_backend_logic PASSED [  7%]
+tests/test_multi_condition_filters.py::test_multi_condition_and_filter FAILED [  9%]
+tests/test_multi_condition_filters.py::test_single_condition_filter PASSED [ 11%]
+tests/test_visual_totals.py::test_visual_totals_with_measure_filter PASSED [ 12%]
+test_expand_all_backend.py::test_expand_all_wildcard PASSED              [ 14%]
+test_filtering.py::test_filtering PASSED                                 [ 15%]
+pivot_engine/tests/clickhouse_compatibility_test.py::test_clickhouse_uri_parsing PASSED [ 17%]
+pivot_engine/tests/clickhouse_compatibility_test.py::test_clickhouse_uri_formats PASSED [ 19%]
+pivot_engine/tests/clickhouse_compatibility_test.py::test_backend_agnostic_features FAILED [ 20%]
+pivot_engine/tests/clickhouse_verification_test.py::test_backend_agnostic_features PASSED [ 22%]
+pivot_engine/tests/test_cache.py::test_cache_set_get[memory] PASSED      [ 23%]
+pivot_engine/tests/test_cache.py::test_cache_set_get[redis] SKIPPED      [ 25%]
+pivot_engine/tests/test_cache.py::test_cache_get_nonexistent[memory] PASSED [ 26%]
+pivot_engine/tests/test_cache.py::test_cache_get_nonexistent[redis] SKIPPED [ 28%]
+pivot_engine/tests/test_cache.py::test_cache_set_overwrite[memory] PASSED [ 30%]
+pivot_engine/tests/test_cache.py::test_cache_set_overwrite[redis] SKIPPED [ 31%]
+pivot_engine/tests/test_cache.py::test_cache_clear[memory] PASSED        [ 33%]
+pivot_engine/tests/test_cache.py::test_cache_clear[redis] SKIPPED (f...) [ 34%]
+pivot_engine/tests/test_cache.py::test_cache_ttl[memory] PASSED          [ 36%]
+pivot_engine/tests/test_cache.py::test_cache_ttl[redis] SKIPPED (fak...) [ 38%]
+pivot_engine/tests/test_cache.py::test_cache_complex_value[memory] PASSED [ 39%]
+pivot_engine/tests/test_cache.py::test_cache_complex_value[redis] SKIPPED [ 41%]
+pivot_engine/tests/test_cdc.py::test_cdc_initialization PASSED           [ 42%]
+pivot_engine/tests/test_cdc.py::test_setup_cdc PASSED                    [ 44%]
+pivot_engine/tests/test_cdc.py::test_process_change_insert PASSED        [ 46%]
+pivot_engine/tests/test_cdc.py::test_process_change_update PASSED        [ 47%]
+pivot_engine/tests/test_cdc.py::test_track_changes_stream PASSED         [ 49%]
+pivot_engine/tests/test_cdc.py::test_controller_cdc_integration PASSED   [ 50%]
+pivot_engine/tests/test_cdc.py::test_update_affected_cache_keys PASSED   [ 52%]
+pivot_engine/tests/test_complete_implementation.py::test_tanstack_adapter PASSED [ 53%]
+pivot_engine/tests/test_complete_implementation.py::test_controller_directly PASSED [ 55%]
+pivot_engine/tests/test_complete_implementation.py::test_scalable_features FAILED [ 57%]
+pivot_engine/tests/test_controller.py::test_ibis_planner_simple_pivot PASSED [ 58%]
+pivot_engine/tests/test_controller.py::test_ibis_planner_with_filter PASSED [ 60%]
+pivot_engine/tests/test_controller.py::test_ibis_planner_with_totals PASSED [ 61%]
+pivot_engine/tests/test_controller.py::test_ibis_planner_with_sort PASSED [ 63%]
+pivot_engine/tests/test_controller.py::test_controller_with_redis_cache SKIPPED [ 65%]
+pivot_engine/tests/test_controller.py::test_cursor_pagination PASSED     [ 66%]
+pivot_engine/tests/test_hierarchical_managers.py::test_ibis_based_hierarchical_scroll FAILED [ 68%]
+pivot_engine/tests/test_scalable_pivot.py::test_scalable_pivot_controller_basic PASSED [ 69%]
+pivot_engine/tests/test_scalable_pivot.py::test_materialized_hierarchy_creation PASSED [ 71%]
+pivot_engine/tests/test_scalable_pivot.py::test_virtual_scroll_hierarchical PASSED [ 73%]
+pivot_engine/tests/test_scalable_pivot.py::test_progressive_hierarchical_load PASSED [ 74%]
+pivot_engine/tests/test_scalable_pivot.py::test_hierarchical_pivot_batch_load PASSED [ 76%]
+pivot_engine/tests/test_streaming_incremental.py::test_stream_aggregation_processor_creation PASSED [ 77%]
+pivot_engine/tests/test_streaming_incremental.py::test_create_real_time_aggregation_job PASSED [ 79%]
+pivot_engine/tests/test_streaming_incremental.py::test_maintain_incremental_views PASSED [ 80%]
+pivot_engine/tests/test_streaming_incremental.py::test_process_stream_update PASSED [ 82%]
+pivot_engine/tests/test_streaming_incremental.py::test_incremental_materialized_view_manager_creation PASSED [ 84%]
+pivot_engine/tests/test_streaming_incremental.py::test_create_incremental_view PASSED [ 85%]
+pivot_engine/tests/test_streaming_incremental.py::test_update_view_incrementally PASSED [ 87%]
+pivot_engine/tests/test_streaming_incremental.py::test_stream_aggregation_with_complex_spec PASSED [ 88%]
+pivot_engine/tests/test_streaming_incremental.py::test_incremental_view_manager_handles_multiple_tables PASSED [ 90%]
+pivot_engine/tests/test_streaming_incremental.py::test_stream_processor_process_various_operations PASSED [ 92%]
+pivot_engine/test_arrow_conversion.py::test_arrow_to_json_conversion PASSED [ 93%]
+pivot_engine/test_async_changes.py::test_async_changes PASSED            [ 95%]
+pivot_engine/test_cursor_simple.py::test_cursor_pagination PASSED        [ 96%]
+pivot_engine/test_scalable_async_changes.py::test_scalable_async_changes PASSED [ 98%]
+pivot_engine/test_totals_demo.py::test_totals_feature PASSED             [100%]
+
+=================================== ERRORS ====================================
+________ ERROR collecting pivot_engine/tests/test_advanced_planning.py ________
+ImportError while importing test module 'C:\Users\ramzy\Downloads\pivot_engine_skeleton\pivot_engine\tests\test_advanced_planning.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+C:\Python312\Lib\importlib\__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pivot_engine\tests\test_advanced_planning.py:9: in <module>
+    from pivot_engine.planner.sql_planner import SQLPlanner, CostEstimator
+E   ModuleNotFoundError: No module named 'pivot_engine.planner.sql_planner'
+___________ ERROR collecting pivot_engine/tests/test_config_main.py ___________
+ImportError while importing test module 'C:\Users\ramzy\Downloads\pivot_engine_skeleton\pivot_engine\tests\test_config_main.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+C:\Python312\Lib\importlib\__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pivot_engine\tests\test_config_main.py:7: in <module>
+    from pivot_engine.main import ScalablePivotApplication
+pivot_engine\pivot_engine\main.py:7: in <module>
+    from pivot_engine.complete_rest_api import create_complete_api, create_realtime_api
+pivot_engine\pivot_engine\complete_rest_api.py:19: in <module>
+    from pivot_engine.observability import setup_logging, setup_metrics
+pivot_engine\pivot_engine\observability.py:4: in <module>
+    import structlog
+E   ModuleNotFoundError: No module named 'structlog'
+____ ERROR collecting pivot_engine/tests/test_diff_engine_enhancements.py _____
+ImportError while importing test module 'C:\Users\ramzy\Downloads\pivot_engine_skeleton\pivot_engine\tests\test_diff_engine_enhancements.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+C:\Python312\Lib\importlib\__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pivot_engine\tests\test_diff_engine_enhancements.py:13: in <module>
+    from pivot_engine.diff.diff_engine import (
+E   ImportError: cannot import name 'MultiDimensionalTilePlanner' from 'pivot_engine.diff.diff_engine' (C:\Users\ramzy\Downloads\pivot_engine_skeleton\pivot_engine\pivot_engine\diff\diff_engine.py)
+__________ ERROR collecting pivot_engine/tests/test_features_impl.py __________
+ImportError while importing test module 'C:\Users\ramzy\Downloads\pivot_engine_skeleton\pivot_engine\tests\test_features_impl.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+C:\Python312\Lib\importlib\__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pivot_engine\tests\test_features_impl.py:10: in <module>
+    from pivot_engine.complete_rest_api import create_complete_api, CompletePivotAPI
+pivot_engine\pivot_engine\complete_rest_api.py:19: in <module>
+    from pivot_engine.observability import setup_logging, setup_metrics
+pivot_engine\pivot_engine\observability.py:4: in <module>
+    import structlog
+E   ModuleNotFoundError: No module named 'structlog'
+__________ ERROR collecting pivot_engine/tests/test_microservices.py __________
+ImportError while importing test module 'C:\Users\ramzy\Downloads\pivot_engine_skeleton\pivot_engine\tests\test_microservices.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+C:\Python312\Lib\importlib\__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pivot_engine\tests\test_microservices.py:9: in <module>
+    from pivot_engine.pivot_microservices.caching.caching_service import CacheService
+E   ModuleNotFoundError: No module named 'pivot_engine.pivot_microservices'
+================================== FAILURES ===================================
+_______________________ test_multi_condition_and_filter _______________________
+tests\test_multi_condition_filters.py:44: in test_multi_condition_and_filter
+    assert len(result) == 1
+E   assert 2 == 1
+E    +  where 2 = len(      product region  sales\n0       Phone  South    200\n1  Headphones  South     50)
+_______________________ test_backend_agnostic_features ________________________
+pivot_engine\tests\clickhouse_compatibility_test.py:95: in test_backend_agnostic_features
+    print(f"\u2705 Hierarchical pivot works: {len(hier_result.get('rows', []))} rows")
+                                             ^^^^^^^^^^^^^^^
+E   AttributeError: 'coroutine' object has no attribute 'get'
+---------------------------- Captured stdout call -----------------------------
+Testing backend-agnostic features...\nSwitched to DuckDBBackend for concurrent execution.\n\u2705 Basic pivot works: 4 rows
+___________________________ test_scalable_features ____________________________
+pivot_engine\tests\test_complete_implementation.py:149: in test_scalable_features
+    pruned_result = controller.run_pruned_hierarchical_pivot(
+pivot_engine\pivot_engine\scalable_pivot_controller.py:598: in run_pruned_hierarchical_pivot
+    return self.progressive_hierarchy_loader.load_progressive_hierarchy(
+pivot_engine\pivot_engine\pruning_manager.py:226: in load_progressive_hierarchy
+    top_level = self._load_level(spec, [], 0)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pivot_engine\pivot_engine\pruning_manager.py:304: in _load_level
+    level_ibis_expr = self._create_level_ibis_expression(spec, parent_path, dimension)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pivot_engine\pivot_engine\pruning_manager.py:316: in _create_level_ibis_expression
+    base_table = self.backend.table(spec.table)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Roaming\Python\Python312\site-packages\ibis\backends\duckdb\__init__.py:275: in table
+    table_schema = self.get_schema(name, catalog=catalog, database=database)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Roaming\Python\Python312\site-packages\ibis\backends\duckdb\__init__.py:321: in get_schema
+    meta = result.fetch_arrow_table()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   _duckdb.InvalidInputException: Invalid Input Error: Attempting to execute an unsuccessful or closed pending query result
+---------------------------- Captured stdout call -----------------------------
+
+Testing scalable features...
+Switched to DuckDBBackend for concurrent execution.
+[SUCCESS] Materialized hierarchy creation successful
+_____________________ test_ibis_based_hierarchical_scroll _____________________
+pivot_engine\tests\test_hierarchical_managers.py:104: in test_ibis_based_hierarchical_scroll
+    assert len(paginated_results) == 2
+E   AssertionError: assert 3 == 2
+E    +  where 3 = len([{'_depth': 0, '_has_children': True, '_id': 'NA', '_is_expanded': True, ...}, {'_depth': 1, '_has_children': False, '_id': 'CA', '_is_expanded': False, ...}, {'_depth': 1, '_has_children': False, '_id': 'US', '_is_expanded': False, ...}])
+============================== warnings summary ===============================
+pivot_engine/tests/clickhouse_compatibility_test.py::test_clickhouse_uri_parsing
+  C:\Users\ramzy\AppData\Roaming\Python\Python312\site-packages\_pytest\python.py:170: PytestReturnNotNoneWarning:
+  
+  Test functions should return None, but pivot_engine/tests/clickhouse_compatibility_test.py::test_clickhouse_uri_parsing returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+
+pivot_engine/tests/clickhouse_compatibility_test.py::test_clickhouse_uri_formats
+  C:\Users\ramzy\AppData\Roaming\Python\Python312\site-packages\_pytest\python.py:170: PytestReturnNotNoneWarning:
+  
+  Test functions should return None, but pivot_engine/tests/clickhouse_compatibility_test.py::test_clickhouse_uri_formats returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.C:\Users\ramzy\AppData\Roaming\Python\Python312\site-packages\_pytest\unraisableexception.py:33: RuntimeWarning:
+
+coroutine 'PivotController.run_hierarchical_pivot' was never awaited
+
+
+
+pivot_engine/tests/clickhouse_verification_test.py::test_backend_agnostic_features
+  C:\Users\ramzy\AppData\Roaming\Python\Python312\site-packages\_pytest\python.py:170: PytestReturnNotNoneWarning:
+  
+  Test functions should return None, but pivot_engine/tests/clickhouse_verification_test.py::test_backend_agnostic_features returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_multi_condition_filters.py::test_multi_condition_and_filter
+FAILED pivot_engine/tests/clickhouse_compatibility_test.py::test_backend_agnostic_features
+FAILED pivot_engine/tests/test_complete_implementation.py::test_scalable_features
+FAILED pivot_engine/tests/test_hierarchical_managers.py::test_ibis_based_hierarchical_scroll
+ERROR pivot_engine/tests/test_advanced_planning.py
+ERROR pivot_engine/tests/test_config_main.py
+ERROR pivot_engine/tests/test_diff_engine_enhancements.py
+ERROR pivot_engine/tests/test_features_impl.py
+ERROR pivot_engine/tests/test_microservices.py
+======== 4 failed, 52 passed, 7 skipped, 3 warnings, 5 errors in 7.15s ========
