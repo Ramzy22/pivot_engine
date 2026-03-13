@@ -85,7 +85,11 @@ Plans:
   2. Exactly one grand total row appears in every backend response that includes totals — never zero, never two
   3. The pivot table displays the grand total row exactly once at the correct position
   4. A regression test asserts single grand total row presence per response
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 03.1-01-PLAN.md — Write failing regression tests for BUG-14 (grand total duplication)
+- [ ] 03.1-02-PLAN.md — Add debug logging to adapter and fix grand total dedup in controller + adapter
 
 ### Phase 3.2: Test Harness Hardening [INSERTED]
 **Goal**: The test suite collects without side effects and the app.py callback has no dead error-handling code
@@ -167,7 +171,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 → 3.2 → 4 → 5 → 6
 | 1. Test Audit & Baseline | 4/4 | Complete   | 2026-03-13 |
 | 2. Data Correctness Bugs | 4/4 | Complete | 2026-03-13 |
 | 3. Virtual Scroll & UI Bugs | 4/4 | Complete | 2026-03-13 |
-| 3.1. Debug Instrumentation + Grand Total Fix | 0/TBD | Not started | - |
+| 3.1. Debug Instrumentation + Grand Total Fix | 0/2 | Not started | - |
 | 3.2. Test Harness Hardening | 0/TBD | Not started | - |
 | 4. Data Input API | 0/TBD | Not started | - |
 | 5. Field Zone UI | 0/TBD | Not started | - |
