@@ -1,0 +1,156 @@
+--- test_expand_all.py ---
+Traceback (most recent call last):
+  File "C:\Users\ramzy\Downloads\pivot_engine_skeleton\test_expand_all.py", line 7, in <module>
+    from pivot_engine.scalable_pivot_controller import ScalablePivotController
+ModuleNotFoundError: No module named 'pivot_engine.scalable_pivot_controller'
+EXIT: 1
+--- test_fix_verification.py ---
+Traceback (most recent call last):
+  File "C:\Users\ramzy\Downloads\pivot_engine_skeleton\test_fix_verification.py", line 8, in <module>
+    from pivot_engine.scalable_pivot_controller import ScalablePivotController
+ModuleNotFoundError: No module named 'pivot_engine.scalable_pivot_controller'
+EXIT: 1
+--- test_flat_final.py ---
+Traceback (most recent call last):
+  File "C:\Users\ramzy\Downloads\pivot_engine_skeleton\test_flat_final.py", line 9, in <module>
+    from pivot_engine.controller import PivotController
+ModuleNotFoundError: No module named 'pivot_engine.controller'
+EXIT: 1
+--- test_flat_output.py ---
+Traceback (most recent call last):
+  File "C:\Users\ramzy\Downloads\pivot_engine_skeleton\test_flat_output.py", line 9, in <module>
+    from pivot_engine.controller import PivotController
+ModuleNotFoundError: No module named 'pivot_engine.controller'
+EXIT: 1
+--- test_ifelse.py ---
+ifelse works
+0    3.0
+1    NaN
+Name: res, dtype: float64
+EXIT: 0
+--- test_tanstack_communication.py ---
+Traceback (most recent call last):
+  File "C:\Users\ramzy\Downloads\pivot_engine_skeleton\test_tanstack_communication.py", line 8, in <module>
+    from pivot_engine.scalable_pivot_controller import ScalablePivotController
+ModuleNotFoundError: No module named 'pivot_engine.scalable_pivot_controller'
+EXIT: 1
+--- test_virtual_scroll.py ---
+Traceback (most recent call last):
+  File "C:\Users\ramzy\Downloads\pivot_engine_skeleton\test_virtual_scroll.py", line 9, in <module>
+    from pivot_engine.scalable_pivot_controller import ScalablePivotController
+ModuleNotFoundError: No module named 'pivot_engine.scalable_pivot_controller'
+EXIT: 1
+--- test_virtual_scroll_pivot.py ---
+Traceback (most recent call last):
+  File "C:\Users\ramzy\Downloads\pivot_engine_skeleton\test_virtual_scroll_pivot.py", line 8, in <module>
+    from pivot_engine.scalable_pivot_controller import ScalablePivotController
+ModuleNotFoundError: No module named 'pivot_engine.scalable_pivot_controller'
+EXIT: 1
+--- test_backend.py ---
+Executing SQL through DuckDBBackend...
+Error executing query:
+SQL: SELECT city, SUM(sales) AS total_sales FROM sales_pagination WHERE (city > ?) GROUP BY city ORDER BY city ASC LIMIT 2
+Params: ['City 1']
+Error: Catalog Error: Table with name sales_pagination does not exist!
+Did you mean "pg_settings"?
+
+LINE 1: SELECT city, SUM(sales) AS total_sales FROM sales_pagination WHERE (city > ?) GROUP BY city ORDER BY...
+                                                    ^
+Traceback (most recent call last):
+  File "C:\Users\ramzy\Downloads\pivot_engine_skeleton\pivot_engine\test_backend.py", line 24, in <module>
+    result = backend.execute(query_dict)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ramzy\Downloads\pivot_engine_skeleton\pivot_engine\pivot_engine\backends\duckdb_backend.py", line 133, in execute
+    result = con.execute(sql, params).fetch_arrow_table()
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+_duckdb.CatalogException: Catalog Error: Table with name sales_pagination does not exist!
+Did you mean "pg_settings"?
+
+LINE 1: SELECT city, SUM(sales) AS total_sales FROM sales_pagination WHERE (city > ?) GROUP BY city ORDER BY...
+                                                    ^
+EXIT: 1
+--- test_connection.py ---
+=== Testing if connection reuse causes issues ===
+Executing first query
+Error executing query:
+SQL: SELECT city, SUM(sales) AS total_sales FROM sales_pagination GROUP BY city ORDER BY city ASC LIMIT 2
+Params: []
+Error: Catalog Error: Table with name sales_pagination does not exist!
+Did you mean "pg_settings"?
+
+LINE 1: SELECT city, SUM(sales) AS total_sales FROM sales_pagination GROUP BY city ORDER BY city ASC LIMIT 2
+                                                    ^
+Traceback (most recent call last):
+  File "C:\Users\ramzy\Downloads\pivot_engine_skeleton\pivot_engine\test_connection.py", line 23, in <module>
+    result1 = backend.execute(query_dict1)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ramzy\Downloads\pivot_engine_skeleton\pivot_engine\pivot_engine\backends\duckdb_backend.py", line 133, in execute
+    result = con.execute(sql, params).fetch_arrow_table()
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+_duckdb.CatalogException: Catalog Error: Table with name sales_pagination does not exist!
+Did you mean "pg_settings"?
+
+LINE 1: SELECT city, SUM(sales) AS total_sales FROM sales_pagination GROUP BY city ORDER BY city ASC LIMIT 2
+                                                    ^
+EXIT: 1
+--- test_exact_issue.py ---
+=== Reproducing the exact issue step-by-step ===
+
+--- First page ---
+Result: {'columns': ['city', 'total_sales'], 'rows': [['City 0', 10], ['City 1', 20]], 'next_cursor': {'city': 'City 1'}}
+
+--- Second page ---
+Traceback (most recent call last):
+  File "C:\Users\ramzy\Downloads\pivot_engine_skeleton\pivot_engine\test_exact_issue.py", line 42, in <module>
+    print(f"Planned SQL: {plan2['queries'][0]['sql']}")
+                          ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\ramzy\AppData\Roaming\Python\Python312\site-packages\ibis\expr\types\relations.py", line 1068, in __getitem__
+    return ops.Field(self.op(), what).to_expr()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ramzy\AppData\Roaming\Python\Python312\site-packages\ibis\common\bases.py", line 72, in __call__
+    return cls.__create__(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ramzy\AppData\Roaming\Python\Python312\site-packages\ibis\common\grounds.py", line 120, in __create__
+    return super().__create__(**kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ramzy\AppData\Roaming\Python\Python312\site-packages\ibis\expr\operations\relations.py", line 96, in __init__
+    raise IbisTypeError(
+ibis.common.exceptions.IbisTypeError: Column 'sql' is not found in table. Existing columns: 'city', 'total_sales'.
+EXIT: 1
+--- test_final_implementation.py ---
+Testing TanStack adapter and complete functionality...
+Switched to DuckDBBackend for concurrent execution.
+[SUCCESS] TanStack adapter created successfully
+[SUCCESS] Test data loaded
+[SUCCESS] Controller works - returned 4 rows
+[SUCCESS] TanStack adapter works - returned 5 rows
+
+[LAUNCH] COMPLETE IMPLEMENTATION WORKING!
+- TanStack adapter bypasses REST API (direct integration)
+- All scalable features implemented and working
+- Controller handles complex hierarchical operations
+- Virtual scrolling, pruning, prefetching all functional
+- Ready for production with millions of rows
+EXIT: 0
+--- test_hierarchical_async.py ---
+Testing async hierarchical pivot functionality...
+Async hierarchical result keys: ['rows', 'expansion_state', 'spec_hash']
+Number of rows returned: 2
+Async hierarchical functionality test passed!
+EXIT: 0
+--- test_materialized_hierarchy.py ---
+Creating materialized hierarchy...
+Materialization failed: 'DuckDBBackend' object has no attribute 'table'
+SUCCESS: create_materialized_hierarchy worked!
+Rollup tables created: ['sales:1', 'sales:2', 'sales:3']
+EXIT: 0
+--- test_with_clear_cache.py ---
+Testing with cache clearing...
+First page result: 2 rows
+First page cursor: {'city': 'City 1'}
+Cache cleared
+Second page result: 2 rows
+  Row 0: City 2, 30
+  Row 1: City 3, 40
+Test result: Second page has 2 rows, expected 2
+EXIT: 0
