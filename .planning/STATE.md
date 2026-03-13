@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 03.1-01-PLAN.md
-last_updated: "2026-03-13T22:16:07.081Z"
+stopped_at: Completed 03.1-02-PLAN.md
+last_updated: "2026-03-13T22:22:10.204Z"
 last_activity: 2026-03-13 - Phase 3 completed; virtual-scroll, hierarchy, and visible UI regressions are green
 progress:
   total_phases: 10
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 14
-  completed_plans: 13
+  completed_plans: 14
   percent: 50
 ---
 
@@ -65,6 +65,7 @@ Progress: [#####-----] 50%
 | Phase 03-virtual-scroll-ui-bugs P03 | 3 | 2 tasks | 2 files |
 | Phase 03-virtual-scroll-ui-bugs P04 | 2 | 2 tasks | 2 files |
 | Phase 03.1-debug-instrumentation-grand-total-fix P01 | 8 | 2 tasks | 1 files |
+| Phase 03.1-debug-instrumentation-grand-total-fix P02 | 10 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -99,6 +100,8 @@ Recent decisions affecting current work:
 - [Phase 03-virtual-scroll-ui-bugs]: grouped-header sizing uses visible leaf columns per rendered section and context menus use measured viewport clamping
 - [Phase 03.1-debug-instrumentation-grand-total-fix]: Grand total dedup hardcodes 'region' field — Plan 02 must use pivot_spec.rows[0] to generalize
 - [Phase 03.1-debug-instrumentation-grand-total-fix]: asyncio_mode not set in pyproject.toml — use explicit @pytest.mark.asyncio decorators
+- [Phase 03.1-debug-instrumentation-grand-total-fix]: grand_total_emitted boolean flag replaces seen_grand_totals set in traverse() — generalizes via pivot_spec.rows[0]
+- [Phase 03.1-debug-instrumentation-grand-total-fix]: _dedup_grand_total unconditional post-processing applied before all returns in handle_virtual_scroll_request
 
 ### Pending Todos
 
@@ -110,6 +113,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-13T22:16:07.074Z
-Stopped at: Completed 03.1-01-PLAN.md
+Last session: 2026-03-13T22:21:59.661Z
+Stopped at: Completed 03.1-02-PLAN.md
 Resume file: None
