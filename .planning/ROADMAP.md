@@ -10,7 +10,7 @@ This is a brownfield project with a substantial existing codebase (~65 test file
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
-- [ ] **Phase 1: Test Audit & Baseline** - Run all 65 tests, document what passes, establish green baseline before any changes
+- [x] **Phase 1: Test Audit & Baseline** - Run all 65 tests, document what passes, establish green baseline before any changes (completed 2026-03-13)
 - [ ] **Phase 2: Data Correctness Bugs** - Fix grand totals, column discovery, filter/sort state persistence
 - [ ] **Phase 3: Virtual Scroll & UI Bugs** - Fix scroll sync, column header alignment, row group expansion, context menu
 - [ ] **Phase 4: Data Input API** - Unify data prop to accept DataFrame, polars, Ibis, or connection string with auto-detection
@@ -130,7 +130,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Test Audit & Baseline | 3/4 | In Progress|  |
+| 1. Test Audit & Baseline | 4/4 | Complete   | 2026-03-13 |
 | 2. Data Correctness Bugs | 0/TBD | Not started | - |
 | 3. Virtual Scroll & UI Bugs | 0/TBD | Not started | - |
 | 4. Data Input API | 0/TBD | Not started | - |
