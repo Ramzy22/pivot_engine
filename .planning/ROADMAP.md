@@ -30,7 +30,13 @@ This is a brownfield project with a substantial existing codebase (~65 test file
   2. A baseline report lists every passing test, every failing test, and the failure reason
   3. Test coverage percentage is measured and documented
   4. No production code has been modified during this phase
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Install pytest-cov/httpx and create root conftest.py (path fix)
+- [ ] 01-02-PLAN.md — Run full pytest audit + standalone scripts, evaluate 50% gate
+- [ ] 01-03-PLAN.md — Fix 4 collection errors with importorskip guards
+- [ ] 01-04-PLAN.md — Fix remaining failures, generate coverage, write TEST_BASELINE.md
 
 ### Phase 2: Data Correctness Bugs
 **Goal**: Aggregated values in the pivot table are always correct and stable — grand totals, column sets, filter state, and sort state all work reliably
@@ -124,7 +130,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Test Audit & Baseline | 0/TBD | Not started | - |
+| 1. Test Audit & Baseline | 0/4 | Not started | - |
 | 2. Data Correctness Bugs | 0/TBD | Not started | - |
 | 3. Virtual Scroll & UI Bugs | 0/TBD | Not started | - |
 | 4. Data Input API | 0/TBD | Not started | - |
