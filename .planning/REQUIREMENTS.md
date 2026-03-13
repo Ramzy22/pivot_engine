@@ -13,25 +13,31 @@
 - [x] **QUAL-02**: Test coverage report generated and baseline documented
 - [ ] **QUAL-03**: Duplicate method `run_pivot_arrow()` in controller.py removed
 - [ ] **QUAL-04**: Column name sanitization secured against SQL injection
+- [ ] **QUAL-05**: `tests/test_frontend_contract.py` collection executes no data-generation side effects (lazy fixture, no module-scope DuckDB init)
+- [ ] **QUAL-06**: `dash_presentation/app.py` `update_pivot_table` has exactly one `except Exception` block (dead block removed)
 
 ### Bug Fixes — Data Correctness
 
-- [ ] **BUG-01**: Grand total rows display correct aggregated values for all measure types
-- [ ] **BUG-02**: Grand total rows do not disappear or flicker on scroll/filter changes
-- [ ] **BUG-03**: Pivot column discovery returns complete, non-sparse column set after data changes
-- [ ] **BUG-04**: Pivot column discovery is consistent across page refreshes and filter changes
-- [ ] **BUG-05**: Filter state persists across row expansion, sort changes, and viewport scroll
-- [ ] **BUG-06**: Sort state applies server-side and does not reset on data refresh
+- [x] **BUG-01**: Grand total rows display correct aggregated values for all measure types
+- [x] **BUG-02**: Grand total rows do not disappear or flicker on scroll/filter changes
+- [x] **BUG-03**: Pivot column discovery returns complete, non-sparse column set after data changes
+- [x] **BUG-04**: Pivot column discovery is consistent across page refreshes and filter changes
+- [x] **BUG-05**: Filter state persists across row expansion, sort changes, and viewport scroll
+- [x] **BUG-06**: Sort state applies server-side and does not reset on data refresh
+
+### Bug Fixes — Debug & Grand Total
+
+- [ ] **BUG-14**: Grand total row appears exactly once in every response — never duplicated at top and bottom simultaneously
 
 ### Bug Fixes — Virtual Scroll & UI
 
-- [ ] **BUG-07**: Virtual scroll rows stay synchronized with server data (no stale rows, no blank areas)
-- [ ] **BUG-08**: Block-based cache invalidates correctly on filter/sort/spec changes
-- [ ] **BUG-09**: Multi-level column headers align correctly over their data cells at all nesting depths
-- [ ] **BUG-10**: Column header span widths match the total width of child columns
-- [ ] **BUG-11**: Row group expansion shows correct children with correct indentation levels
-- [ ] **BUG-12**: Expanding/collapsing rows does not corrupt sibling row positions
-- [ ] **BUG-13**: Context menu renders within viewport bounds (no off-screen rendering)
+- [x] **BUG-07**: Virtual scroll rows stay synchronized with server data (no stale rows, no blank areas)
+- [x] **BUG-08**: Block-based cache invalidates correctly on filter/sort/spec changes
+- [x] **BUG-09**: Multi-level column headers align correctly over their data cells at all nesting depths
+- [x] **BUG-10**: Column header span widths match the total width of child columns
+- [x] **BUG-11**: Row group expansion shows correct children with correct indentation levels
+- [x] **BUG-12**: Expanding/collapsing rows does not corrupt sibling row positions
+- [x] **BUG-13**: Context menu renders within viewport bounds (no off-screen rendering)
 
 ### Data Input API
 
@@ -133,19 +139,22 @@
 |-------------|-------|--------|
 | QUAL-01 | Phase 1 - Test Audit & Baseline | Complete |
 | QUAL-02 | Phase 1 - Test Audit & Baseline | Complete |
-| BUG-01 | Phase 2 - Data Correctness Bugs | Pending |
-| BUG-02 | Phase 2 - Data Correctness Bugs | Pending |
-| BUG-03 | Phase 2 - Data Correctness Bugs | Pending |
-| BUG-04 | Phase 2 - Data Correctness Bugs | Pending |
-| BUG-05 | Phase 2 - Data Correctness Bugs | Pending |
-| BUG-06 | Phase 2 - Data Correctness Bugs | Pending |
-| BUG-07 | Phase 3 - Virtual Scroll & UI Bugs | Pending |
-| BUG-08 | Phase 3 - Virtual Scroll & UI Bugs | Pending |
-| BUG-09 | Phase 3 - Virtual Scroll & UI Bugs | Pending |
-| BUG-10 | Phase 3 - Virtual Scroll & UI Bugs | Pending |
-| BUG-11 | Phase 3 - Virtual Scroll & UI Bugs | Pending |
-| BUG-12 | Phase 3 - Virtual Scroll & UI Bugs | Pending |
-| BUG-13 | Phase 3 - Virtual Scroll & UI Bugs | Pending |
+| BUG-01 | Phase 2 - Data Correctness Bugs | Complete |
+| BUG-02 | Phase 2 - Data Correctness Bugs | Complete |
+| BUG-03 | Phase 2 - Data Correctness Bugs | Complete |
+| BUG-04 | Phase 2 - Data Correctness Bugs | Complete |
+| BUG-05 | Phase 2 - Data Correctness Bugs | Complete |
+| BUG-06 | Phase 2 - Data Correctness Bugs | Complete |
+| BUG-07 | Phase 3 - Virtual Scroll & UI Bugs | Complete |
+| BUG-08 | Phase 3 - Virtual Scroll & UI Bugs | Complete |
+| BUG-09 | Phase 3 - Virtual Scroll & UI Bugs | Complete |
+| BUG-10 | Phase 3 - Virtual Scroll & UI Bugs | Complete |
+| BUG-11 | Phase 3 - Virtual Scroll & UI Bugs | Complete |
+| BUG-12 | Phase 3 - Virtual Scroll & UI Bugs | Complete |
+| BUG-13 | Phase 3 - Virtual Scroll & UI Bugs | Complete |
+| BUG-14 | Phase 3.1 - Debug Instrumentation + Grand Total Fix | Pending |
+| QUAL-05 | Phase 3.2 - Test Harness Hardening | Pending |
+| QUAL-06 | Phase 3.2 - Test Harness Hardening | Pending |
 | API-01 | Phase 4 - Data Input API | Pending |
 | API-02 | Phase 4 - Data Input API | Pending |
 | API-03 | Phase 4 - Data Input API | Pending |
@@ -187,8 +196,8 @@
 | CI-03 | Phase 8 - Packaging, Docs & CI/CD | Pending |
 
 **Coverage:**
-- v1 requirements: 47 total
-- Mapped to phases: 47
+- v1 requirements: 50 total
+- Mapped to phases: 50
 - Unmapped: 0
 
 ---

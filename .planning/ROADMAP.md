@@ -11,8 +11,10 @@ This is a brownfield project with a substantial existing codebase (~65 test file
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
 - [x] **Phase 1: Test Audit & Baseline** - Run all 65 tests, document what passes, establish green baseline before any changes (completed 2026-03-13)
-- [ ] **Phase 2: Data Correctness Bugs** - Fix grand totals, column discovery, filter/sort state persistence
-- [ ] **Phase 3: Virtual Scroll & UI Bugs** - Fix scroll sync, column header alignment, row group expansion, context menu
+- [x] **Phase 2: Data Correctness Bugs** - Fix grand totals, column discovery, filter/sort state persistence (completed 2026-03-13)
+- [x] **Phase 3: Virtual Scroll & UI Bugs** - Fix scroll sync, column header alignment, row group expansion, context menu (completed 2026-03-13)
+- [ ] **Phase 3.1: Debug Instrumentation + Grand Total Fix** [INSERTED] - Add request/response debug logging to adapter, diagnose and fix duplicate grand total row, add regression
+- [ ] **Phase 3.2: Test Harness Hardening** [INSERTED] - Fix unguarded app import in test_frontend_contract.py, remove dead except block in app.py
 - [ ] **Phase 4: Data Input API** - Unify data prop to accept DataFrame, polars, Ibis, or connection string with auto-detection
 - [ ] **Phase 5: Field Zone UI** - Complete drag-and-drop sidebar with four zones, aggregation selector, bidirectional Dash props
 - [ ] **Phase 6: Drill-Through & Excel Export** - Cell drill-through modal with source rows, Excel .xlsx download of current view
@@ -48,7 +50,13 @@ Plans:
   3. After any filter change or page refresh, all pivot columns that should exist are present in the header
   4. Applied filters remain active and correct when the user expands rows, changes sort order, or scrolls
   5. Sort order set by the user is applied server-side and survives data refreshes
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [x] 02-01-PLAN.md - Add explicit regression coverage for totals, dynamic columns, and state persistence
+- [x] 02-02-PLAN.md - Fix totals semantics and server-side sort behavior
+- [x] 02-03-PLAN.md - Fix dynamic column discovery completeness and refresh consistency
+- [x] 02-04-PLAN.md - Fix hierarchy/virtual-scroll persistence and run full verification
 
 ### Phase 3: Virtual Scroll & UI Bugs
 **Goal**: The table renders correctly at all times — scrolled rows match server data, headers align with cells, row groups expand accurately, and menus stay on screen
@@ -60,6 +68,32 @@ Plans:
   3. Multi-level column headers visually span exactly the width of their child columns at every nesting depth
   4. Expanding a row group shows the correct child rows at the correct indentation; collapsing does not shift sibling rows
   5. Right-clicking any cell opens a context menu that is fully visible within the browser viewport
+**Plans**: 4 plans
+
+Plans:
+- [x] 03-01-PLAN.md - Add regressions for virtual-scroll continuity and hierarchy stability
+- [x] 03-02-PLAN.md - Fix backend hierarchy semantics, visible-row counts, and expand/collapse behavior
+- [x] 03-03-PLAN.md - Fix frontend block-cache invalidation and stale-row synchronization
+- [x] 03-04-PLAN.md - Fix grouped-header geometry, context-menu placement, and run full verification
+
+### Phase 3.1: Debug Instrumentation + Grand Total Fix [INSERTED]
+**Goal**: Diagnose and fix the duplicate grand total row (visible at top overlapping a data row AND at bottom) by adding toggleable request/response logging to the adapter layer, then fixing the root cause
+**Depends on**: Phase 3
+**Requirements**: BUG-14
+**Success Criteria** (what must be TRUE):
+  1. A debug flag enables structured logging of every incoming frontend request payload and every outgoing backend response (row data, total row presence, data slice bounds)
+  2. Exactly one grand total row appears in every backend response that includes totals — never zero, never two
+  3. The pivot table displays the grand total row exactly once at the correct position
+  4. A regression test asserts single grand total row presence per response
+**Plans**: TBD
+
+### Phase 3.2: Test Harness Hardening [INSERTED]
+**Goal**: The test suite collects without side effects and the app.py callback has no dead error-handling code
+**Depends on**: Phase 3.1
+**Requirements**: QUAL-05, QUAL-06
+**Success Criteria** (what must be TRUE):
+  1. `tests/test_frontend_contract.py` collection does not execute any data-generation or DuckDB initialization code
+  2. `dash_presentation/app.py` `update_pivot_table` callback has exactly one `except Exception` block
 **Plans**: TBD
 
 ### Phase 4: Data Input API
@@ -126,13 +160,15 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
+Phases execute in numeric order: 1 → 2 → 3 → 3.1 → 3.2 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Test Audit & Baseline | 4/4 | Complete   | 2026-03-13 |
-| 2. Data Correctness Bugs | 0/TBD | Not started | - |
-| 3. Virtual Scroll & UI Bugs | 0/TBD | Not started | - |
+| 2. Data Correctness Bugs | 4/4 | Complete | 2026-03-13 |
+| 3. Virtual Scroll & UI Bugs | 4/4 | Complete | 2026-03-13 |
+| 3.1. Debug Instrumentation + Grand Total Fix | 0/TBD | Not started | - |
+| 3.2. Test Harness Hardening | 0/TBD | Not started | - |
 | 4. Data Input API | 0/TBD | Not started | - |
 | 5. Field Zone UI | 0/TBD | Not started | - |
 | 6. Drill-Through & Excel Export | 0/TBD | Not started | - |
