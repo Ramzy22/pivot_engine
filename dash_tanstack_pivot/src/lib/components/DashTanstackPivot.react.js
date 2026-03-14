@@ -1089,6 +1089,11 @@ export default function DashTanstackPivot(props) {
         }
     };
 
+    const closeFilterPopover = () => {
+        setActiveFilterCol(null);
+        setFilterAnchorEl(null);
+    };
+
     const columns = useMemo(() => {
         // Enhanced Sorting Logic (Tree-aware + Natural + Customization)
         const customSortingFn = (rowA, rowB, columnId) => {
@@ -2262,7 +2267,7 @@ export default function DashTanstackPivot(props) {
                     <FilterPopover
                     column={header.column}
                     anchorEl={filterAnchorEl}
-                    onClose={() => { setActiveFilterCol(null); setFilterAnchorEl(null); }}
+                    onClose={closeFilterPopover}
                     onFilter={(type, val) => handleHeaderFilter(header.column.id, type, val)}
                     currentFilter={filters[header.column.id]}
                     options={activeFilterCol === header.column.id ? activeFilterOptions : []}
@@ -2482,7 +2487,8 @@ export default function DashTanstackPivot(props) {
                                                                                                                                                 {zone.id === 'filter' && activeFilterCol === label && (
                                                                                                                     <FilterPopover 
                                                                                                                         column={{header: label, id: label}} 
-                                                                                                                        onClose={() => setActiveFilterCol(null)}
+                                                                                                                        anchorEl={filterAnchorEl}
+                                                                                                                        onClose={closeFilterPopover}
                                                                                                                         onFilter={(filterValue) => handleHeaderFilter(label, filterValue)}
                                                                                                                         currentFilter={filters[label]}
                                                                                                                         options={filterOptions[label] || []}
