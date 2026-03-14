@@ -2434,7 +2434,7 @@ export default function DashTanstackPivot(props) {
                                     ))}
                                 </div>
                             )}
-                            {[{id:'rows', label:'Rows'}, {id:'cols', label:'Columns'}, {id:'vals', label:'Values'}].map(zone => (
+                            {[{id:'rows', label:'Rows'}, {id:'cols', label:'Columns'}, {id:'vals', label:'Values'}, {id:'filter', label:'Filters'}].map(zone => (
                                 <div key={zone.id}>
                                     <div style={styles.sectionTitle}>{zone.label}</div>
                                     <div style={styles.dropZone} onDragOver={e=>e.preventDefault()} onDrop={e=>onDrop(e, zone.id)}>
@@ -2498,7 +2498,7 @@ export default function DashTanstackPivot(props) {
                                                                                                                         </div>
                                             )
                                         })}
-                                        <div style={{height:20}} onDragOver={e=>onDragOver(e,zone.id,(zone.id==='rows'?rowFields:zone.id==='cols'?colFields:valConfigs).length)} />
+                                        <div style={{height:20}} onDragOver={e=>onDragOver(e,zone.id,(zone.id==='rows'?rowFields:zone.id==='cols'?colFields:zone.id==='vals'?valConfigs:Object.keys(filters).filter(k=>k!=='global')).length)} />
                                     </div>
                                 </div>
                             ))}
