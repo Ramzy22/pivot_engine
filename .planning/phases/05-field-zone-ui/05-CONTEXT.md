@@ -23,6 +23,8 @@ An interactive sidebar where users drag available fields into four labeled zones
 ### Aggregation types (HIGH priority — criterion 3 gap)
 - Add `min` and `max` options to the Values zone aggregation dropdown
 - Current options: sum, avg, count. Required: sum, avg, count, min, max
+- **All aggregations (sum, min, max, avg, count) MUST be computed server-side** — the frontend only sends the `{field, agg}` config to the Python backend; no client-side aggregation logic
+- The pivot engine (DuckDB/Ibis) is the single source of truth for computed values; the React component renders results only
 
 ### Duplicate field prevention (MEDIUM priority — bug)
 - When dropping a field into Rows or Columns, check if it already exists in the target zone before inserting
