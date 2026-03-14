@@ -73,6 +73,15 @@
 - [ ] **EXPORT-03**: Exported file preserves row hierarchy (indentation or grouping)
 - [ ] **EXPORT-04**: Grand totals and subtotals are included in export
 
+### Column Display & UI States
+
+- [ ] **UI-01**: Pinned columns display a shadow or border separator and remain fixed during horizontal scroll
+- [ ] **UI-02**: Sorted columns show a visible ascending/descending indicator on the header; the active sort column is visually distinct
+- [ ] **UI-03**: Hidden columns can be toggled via the column visibility panel; visibility state persists across filter changes and data refreshes
+- [ ] **UI-04**: Column resize handles appear on header hover; resized widths persist during scroll and after data refresh
+- [ ] **UI-05**: Combined column states (pinned + sorted + resized simultaneously) display without visual conflict or layout breakage
+- [ ] **UI-06**: Default column widths, row heights, and header heights are visually balanced and consistent across all data densities
+
 ### Code Quality & Architecture
 
 - [ ] **CODE-01**: Main React component (`DashTanstackPivot.react.js`) split into focused sub-components (< 400 lines each)
@@ -173,34 +182,41 @@
 | DRILL-03 | Phase 6 - Drill-Through & Excel Export | Pending |
 | DRILL-04 | Phase 6 - Drill-Through & Excel Export | Pending |
 | DRILL-05 | Phase 6 - Drill-Through & Excel Export | Pending |
+| DRILL-06 | Phase 6 - Drill-Through & Excel Export | Pending |
 | EXPORT-01 | Phase 6 - Drill-Through & Excel Export | Pending |
 | EXPORT-02 | Phase 6 - Drill-Through & Excel Export | Pending |
 | EXPORT-03 | Phase 6 - Drill-Through & Excel Export | Pending |
 | EXPORT-04 | Phase 6 - Drill-Through & Excel Export | Pending |
-| CODE-01 | Phase 7 - Code Quality Refactor | Pending |
-| CODE-02 | Phase 7 - Code Quality Refactor | Pending |
-| CODE-03 | Phase 7 - Code Quality Refactor | Pending |
-| CODE-04 | Phase 7 - Code Quality Refactor | Pending |
-| QUAL-03 | Phase 7 - Code Quality Refactor | Pending |
-| QUAL-04 | Phase 7 - Code Quality Refactor | Pending |
-| PKG-01 | Phase 8 - Packaging, Docs & CI/CD | Pending |
-| PKG-02 | Phase 8 - Packaging, Docs & CI/CD | Pending |
-| PKG-03 | Phase 8 - Packaging, Docs & CI/CD | Pending |
-| PKG-04 | Phase 8 - Packaging, Docs & CI/CD | Pending |
-| PKG-05 | Phase 8 - Packaging, Docs & CI/CD | Pending |
-| DOC-01 | Phase 8 - Packaging, Docs & CI/CD | Pending |
-| DOC-02 | Phase 8 - Packaging, Docs & CI/CD | Pending |
-| DOC-03 | Phase 8 - Packaging, Docs & CI/CD | Pending |
-| DOC-04 | Phase 8 - Packaging, Docs & CI/CD | Pending |
-| CI-01 | Phase 8 - Packaging, Docs & CI/CD | Pending |
-| CI-02 | Phase 8 - Packaging, Docs & CI/CD | Pending |
-| CI-03 | Phase 8 - Packaging, Docs & CI/CD | Pending |
+| UI-01 | Phase 7 - Column Display & UI States | Pending |
+| UI-02 | Phase 7 - Column Display & UI States | Pending |
+| UI-03 | Phase 7 - Column Display & UI States | Pending |
+| UI-04 | Phase 7 - Column Display & UI States | Pending |
+| UI-05 | Phase 7 - Column Display & UI States | Pending |
+| UI-06 | Phase 7 - Column Display & UI States | Pending |
+| CODE-01 | Phase 8 - Code Quality Refactor | Pending |
+| CODE-02 | Phase 8 - Code Quality Refactor | Pending |
+| CODE-03 | Phase 8 - Code Quality Refactor | Pending |
+| CODE-04 | Phase 8 - Code Quality Refactor | Pending |
+| QUAL-03 | Phase 8 - Code Quality Refactor | Pending |
+| QUAL-04 | Phase 8 - Code Quality Refactor | Pending |
+| PKG-01 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| PKG-02 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| PKG-03 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| PKG-04 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| PKG-05 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| DOC-01 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| DOC-02 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| DOC-03 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| DOC-04 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| CI-01 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| CI-02 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| CI-03 | Phase 9 - Packaging, Docs & CI/CD | Pending |
 
 **Coverage:**
-- v1 requirements: 50 total
-- Mapped to phases: 50
+- v1 requirements: 57 total (50 original + DRILL-06 + UI-01 through UI-06)
+- Mapped to phases: 57
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-13*
-*Last updated: 2026-03-13 after roadmap creation*
+*Last updated: 2026-03-14 — added DRILL-06 (REST endpoint), UI-01–UI-06 (Phase 7), renumbered Code Quality → Phase 8, Packaging → Phase 9*
