@@ -1512,6 +1512,14 @@ export default function DashTanstackPivot(props) {
         expanded,
         rowCount
     }), [sorting, filters, rowFields, colFields, valConfigs, expanded, rowCount]);
+    const serverSideViewportResetKey = useMemo(() => JSON.stringify({
+        sorting,
+        filters,
+        rowFields,
+        colFields,
+        valConfigs,
+        rowCount
+    }), [sorting, filters, rowFields, colFields, valConfigs, rowCount]);
 
     const serverSidePinsGrandTotal = serverSide && showColTotals;
     const effectiveRowCount = serverSidePinsGrandTotal && rowCount ? Math.max(rowCount - 1, 0) : rowCount;
@@ -1844,10 +1852,11 @@ export default function DashTanstackPivot(props) {
             centerRows: [],
             bottomRows: []
         };
+        // Expansion should still refetch server-side data, but it should not force the viewport back to the top.
         if (parentRef.current) {
             parentRef.current.scrollTop = 0;
         }
-    }, [serverSide, serverSideCacheKey, parentRef]);
+    }, [serverSide, serverSideViewportResetKey, parentRef]);
 
     const effectiveTopRows = (serverSide && hasRenderedData && topRows.length === 0 && centerRows.length === 0)
         ? lastStableRowModelRef.current.topRows
