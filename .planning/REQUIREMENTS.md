@@ -53,9 +53,9 @@
 - [x] **FIELD-01**: Sidebar contains four drop zones: Rows, Columns, Values, Filters
 - [x] **FIELD-02**: User can drag any available field into any drop zone
 - [x] **FIELD-03**: Dropping a field into Values zone shows aggregation selector (sum/avg/count/min/max)
-- [ ] **FIELD-04**: Removing a field from a zone updates the pivot immediately
-- [ ] **FIELD-05**: Field zone state is reflected back to Python via Dash props (bidirectional)
-- [ ] **FIELD-06**: Field zone initial state can be set from Python props
+- [x] **FIELD-04**: Removing a field from a zone updates the pivot immediately
+- [x] **FIELD-05**: Field zone state is reflected back to Python via Dash props (bidirectional)
+- [x] **FIELD-06**: Field zone initial state can be set from Python props
 
 ### Drill-Through
 
@@ -165,9 +165,9 @@
 | FIELD-01 | Phase 5 - Field Zone UI | Complete |
 | FIELD-02 | Phase 5 - Field Zone UI | Complete |
 | FIELD-03 | Phase 5 - Field Zone UI | Complete |
-| FIELD-04 | Phase 5 - Field Zone UI | Pending |
-| FIELD-05 | Phase 5 - Field Zone UI | Pending |
-| FIELD-06 | Phase 5 - Field Zone UI | Pending |
+| FIELD-04 | Phase 5 - Field Zone UI | Complete |
+| FIELD-05 | Phase 5 - Field Zone UI | Complete |
+| FIELD-06 | Phase 5 - Field Zone UI | Complete |
 | DRILL-01 | Phase 6 - Drill-Through & Excel Export | Pending |
 | DRILL-02 | Phase 6 - Drill-Through & Excel Export | Pending |
 | DRILL-03 | Phase 6 - Drill-Through & Excel Export | Pending |

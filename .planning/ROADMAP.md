@@ -16,7 +16,7 @@ This is a brownfield project with a substantial existing codebase (~65 test file
 - [x] **Phase 3.1: Debug Instrumentation + Grand Total Fix** [INSERTED] - Add request/response debug logging to adapter, diagnose and fix duplicate grand total row, add regression (completed 2026-03-13)
 - [x] **Phase 3.2: Test Harness Hardening** [INSERTED] - Fix unguarded app import in test_frontend_contract.py, remove dead except block in app.py (completed 2026-03-14)
 - [x] **Phase 4: Data Input API** - Unify data prop to accept DataFrame, polars, Ibis, or connection string with auto-detection (completed 2026-03-14)
-- [ ] **Phase 5: Field Zone UI** - Complete drag-and-drop sidebar with four zones, aggregation selector, bidirectional Dash props
+- [x] **Phase 5: Field Zone UI** - Complete drag-and-drop sidebar with four zones, aggregation selector, bidirectional Dash props (completed 2026-03-14)
 - [ ] **Phase 6: Drill-Through & Excel Export** - Cell drill-through modal (server-side via REST endpoint, not Dash callbacks) with pagination, and Excel .xlsx download
 - [ ] **Phase 7: Column Display & UI States** - Review and correct all column states (pinned, sorted, hidden, resized), their visual indicators, and UI defaults
 - [ ] **Phase 8: Code Quality Refactor** - Split 1500-line component, add error boundaries, fix stale closures and filter duplication
@@ -137,7 +137,7 @@ Plans:
 
 Plans:
 - [x] 05-01-PLAN.md — Add Filters drop zone and min/max aggregation options to sidebar
-- [ ] 05-02-PLAN.md — Harden drag-drop with validation, duplicate prevention, empty state, and regression tests
+- [x] 05-02-PLAN.md — Harden drag-drop with validation, duplicate prevention, empty state, and regression tests
 
 ### Phase 6: Drill-Through & Excel Export
 **Goal**: Users can investigate any aggregated cell by seeing its source rows in a modal, and can download the current pivot view as an Excel file
@@ -202,7 +202,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 → 3.2 → 4 → 5 → 6
 | 3.1. Debug Instrumentation + Grand Total Fix | 2/2 | Complete | 2026-03-13 |
 | 3.2. Test Harness Hardening | 2/2 | Complete | 2026-03-14 |
 | 4. Data Input API | 3/3 | Complete | 2026-03-14 |
-| 5. Field Zone UI | 1/2 | In Progress | - |
+| 5. Field Zone UI | 2/2 | Complete | 2026-03-14 |
 | 6. Drill-Through & Excel Export | 0/TBD | Not started | - |
 | 7. Column Display & UI States | 0/TBD | Not started | - |
 | 8. Code Quality Refactor | 0/TBD | Not started | - |

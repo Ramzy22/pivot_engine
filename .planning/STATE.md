@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in_progress
-stopped_at: Completed 05-01-PLAN.md
-last_updated: "2026-03-14T13:34:24.475Z"
-last_activity: 2026-03-14 - Phase 05-01 completed; Filters drop zone and min/max aggregations are available in the sidebar
+stopped_at: Completed 05-field-zone-ui-02-PLAN.md
+last_updated: "2026-03-14T13:45:00.000Z"
+last_activity: 2026-03-14 - Phase 05 completed; field zones now validate drag-drop, prevent duplicate inserts, and round-trip to Python
 progress:
   total_phases: 11
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 21
-  completed_plans: 20
-  percent: 50
+  completed_plans: 21
+  percent: 100
 ---
 
 # Project State
@@ -21,21 +21,21 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-13)
 
 **Core value:** A Python developer adds an enterprise-grade pivot table to any Dash app in under 10 lines of code - no JS knowledge, no database config, no performance tuning required.
-**Current focus:** Phase 5 - Field Zone UI
+**Current focus:** Phase 6 - Drill-Through & Excel Export
 
 ## Current Position
 
-Phase: 5 of 11 (Field Zone UI)
-Plan: 1 of 2 in current phase
-Status: In progress
-Last activity: 2026-03-14 - Phase 05-01 completed; Filters drop zone and min/max aggregations are available in the sidebar
+Phase: 6 of 11 (Drill-Through & Excel Export)
+Plan: 0 of TBD in current phase
+Status: Ready for planning
+Last activity: 2026-03-14 - Phase 05 completed; field zones now validate drag-drop, prevent duplicate inserts, and round-trip to Python
 
-Progress: [##########] 95%
+Progress: [##########] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 20
+- Total plans completed: 21
 - Average duration: ~5 min
 - Total execution time: ~0.9 hours
 
@@ -48,7 +48,7 @@ Progress: [##########] 95%
 | 03-virtual-scroll-ui-bugs | 4 | 18 min | 4.5 min |
 
 **Recent Trend:**
-- Last 5 plans: 03.2-01, 03.2-02, 04-01, 04-02, 05-01
+- Last 5 plans: 03.2-02, 04-01, 04-02, 05-01, 05-02
 - Trend: steady
 
 *Updated after each plan completion*
@@ -72,6 +72,7 @@ Progress: [##########] 95%
 | Phase 04-data-input-api P02 | 2 | 1 tasks | 2 files |
 | Phase 04-data-input-api P03 | 4 | 2 tasks | 1 files |
 | Phase 05-field-zone-ui P01 | 3 min | 2 tasks | 1 files |
+| Phase 05-field-zone-ui P02 | 1 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -120,6 +121,8 @@ Recent decisions affecting current work:
 - [Phase 04-data-input-api]: Lazy import of normalize_data_input inside load_data method body avoids circular import risk between tanstack_adapter and data_input modules
 - [Phase 05-field-zone-ui]: Kept min/max as frontend config options only so the Python backend remains the single source of truth for aggregation
 - [Phase 05-field-zone-ui]: Made the existing filter-specific sidebar logic reachable by adding the missing Filters zone instead of duplicating handlers
+- [Phase 05-field-zone-ui]: Left unrelated full-suite failures deferred because they were outside this plan's target files and backend/UI write scope
+- [Phase 05-field-zone-ui]: Covered FIELD-05 and FIELD-06 at the Python boundary by asserting serialized Dash component props rather than adding a separate frontend harness
 
 ### Pending Todos
 
@@ -127,10 +130,10 @@ None yet.
 
 ### Blockers/Concerns
 
-- Manual browser verification is still reasonable for final header geometry and viewport menu placement, but automated contract coverage, Python suite verification, and JS bundle compilation are green
+- Full-suite verification still has deferred failures in `tests/test_frontend_contract.py` and `tests/test_frontend_filters.py`; see `.planning/phases/05-field-zone-ui/deferred-items.md`
 
 ## Session Continuity
 
-Last session: 2026-03-14T13:34:22.416Z
-Stopped at: Completed 05-01-PLAN.md
+Last session: 2026-03-14T13:42:33.082Z
+Stopped at: Completed 05-field-zone-ui-02-PLAN.md
 Resume file: None
