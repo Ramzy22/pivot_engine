@@ -2,13 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-14T12:55:29.022Z"
+status: in_progress
+stopped_at: Completed 05-01-PLAN.md
+last_updated: "2026-03-14T13:34:24.475Z"
+last_activity: 2026-03-14 - Phase 05-01 completed; Filters drop zone and min/max aggregations are available in the sidebar
 progress:
-  total_phases: 6
+  total_phases: 11
   completed_phases: 6
-  total_plans: 19
-  completed_plans: 19
+  total_plans: 21
+  completed_plans: 20
+  percent: 50
 ---
 
 # Project State
@@ -18,21 +21,21 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-13)
 
 **Core value:** A Python developer adds an enterprise-grade pivot table to any Dash app in under 10 lines of code - no JS knowledge, no database config, no performance tuning required.
-**Current focus:** Phase 4 - Data Input API
+**Current focus:** Phase 5 - Field Zone UI
 
 ## Current Position
 
-Phase: 4 of 8 (Data Input API)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-03-14 - Phase 3.2 completed; app bootstrap is lazy and frontend contract tests are green
+Phase: 5 of 11 (Field Zone UI)
+Plan: 1 of 2 in current phase
+Status: In progress
+Last activity: 2026-03-14 - Phase 05-01 completed; Filters drop zone and min/max aggregations are available in the sidebar
 
-Progress: [#####-----] 50%
+Progress: [##########] 95%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 12
+- Total plans completed: 20
 - Average duration: ~5 min
 - Total execution time: ~0.9 hours
 
@@ -45,7 +48,7 @@ Progress: [#####-----] 50%
 | 03-virtual-scroll-ui-bugs | 4 | 18 min | 4.5 min |
 
 **Recent Trend:**
-- Last 5 plans: 02-04, 03-01, 03-02, 03-03, 03-04
+- Last 5 plans: 03.2-01, 03.2-02, 04-01, 04-02, 05-01
 - Trend: steady
 
 *Updated after each plan completion*
@@ -68,6 +71,7 @@ Progress: [#####-----] 50%
 | Phase 04-data-input-api P01 | 3 | 1 tasks | 1 files |
 | Phase 04-data-input-api P02 | 2 | 1 tasks | 2 files |
 | Phase 04-data-input-api P03 | 4 | 2 tasks | 1 files |
+| Phase 05-field-zone-ui P01 | 3 min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -114,6 +118,8 @@ Recent decisions affecting current work:
 - [Phase 04-data-input-api]: DataInputError subclasses TypeError so existing isinstance guards remain compatible
 - [Phase 04-data-input-api]: Auto-fixed NamedTemporaryFile Windows bug: os.unlink before duckdb.connect so DuckDB creates fresh DB file
 - [Phase 04-data-input-api]: Lazy import of normalize_data_input inside load_data method body avoids circular import risk between tanstack_adapter and data_input modules
+- [Phase 05-field-zone-ui]: Kept min/max as frontend config options only so the Python backend remains the single source of truth for aggregation
+- [Phase 05-field-zone-ui]: Made the existing filter-specific sidebar logic reachable by adding the missing Filters zone instead of duplicating handlers
 
 ### Pending Todos
 
@@ -125,6 +131,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-14T12:52:20.703Z
-Stopped at: Completed 04-03-PLAN.md
+Last session: 2026-03-14T13:34:22.416Z
+Stopped at: Completed 05-01-PLAN.md
 Resume file: None

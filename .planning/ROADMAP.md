@@ -17,9 +17,10 @@ This is a brownfield project with a substantial existing codebase (~65 test file
 - [x] **Phase 3.2: Test Harness Hardening** [INSERTED] - Fix unguarded app import in test_frontend_contract.py, remove dead except block in app.py (completed 2026-03-14)
 - [x] **Phase 4: Data Input API** - Unify data prop to accept DataFrame, polars, Ibis, or connection string with auto-detection (completed 2026-03-14)
 - [ ] **Phase 5: Field Zone UI** - Complete drag-and-drop sidebar with four zones, aggregation selector, bidirectional Dash props
-- [ ] **Phase 6: Drill-Through & Excel Export** - Cell drill-through modal with source rows, Excel .xlsx download of current view
-- [ ] **Phase 7: Code Quality Refactor** - Split 1500-line component, add error boundaries, fix stale closures and filter duplication
-- [ ] **Phase 8: Packaging, Docs & CI/CD** - PyPI publishing, README, examples, GitHub Actions
+- [ ] **Phase 6: Drill-Through & Excel Export** - Cell drill-through modal (server-side via REST endpoint, not Dash callbacks) with pagination, and Excel .xlsx download
+- [ ] **Phase 7: Column Display & UI States** - Review and correct all column states (pinned, sorted, hidden, resized), their visual indicators, and UI defaults
+- [ ] **Phase 8: Code Quality Refactor** - Split 1500-line component, add error boundaries, fix stale closures and filter duplication
+- [ ] **Phase 9: Packaging, Docs & CI/CD** - PyPI publishing, README, examples, GitHub Actions
 
 ## Phase Details
 
@@ -135,28 +136,38 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 05-01-PLAN.md — Add Filters drop zone and min/max aggregation options to sidebar
+- [x] 05-01-PLAN.md — Add Filters drop zone and min/max aggregation options to sidebar
 - [ ] 05-02-PLAN.md — Harden drag-drop with validation, duplicate prevention, empty state, and regression tests
 
 ### Phase 6: Drill-Through & Excel Export
 **Goal**: Users can investigate any aggregated cell by seeing its source rows in a modal, and can download the current pivot view as an Excel file
 **Depends on**: Phase 5
-**Requirements**: DRILL-01, DRILL-02, DRILL-03, DRILL-04, DRILL-05, EXPORT-01, EXPORT-02, EXPORT-03, EXPORT-04
+**Requirements**: DRILL-01, DRILL-02, DRILL-03, DRILL-04, DRILL-05, DRILL-06, EXPORT-01, EXPORT-02, EXPORT-03, EXPORT-04
 **Success Criteria** (what must be TRUE):
   1. Clicking any aggregated cell opens a drill-through modal showing the underlying source rows for that cell
-  2. The source rows are fetched server-side using the cell's exact pivot coordinate filters
-  3. The drill-through modal paginates when the source row count exceeds one page
-  4. The drill-through modal supports sorting any column and applying a basic text filter
-  5. Clicking "Export to Excel" downloads a .xlsx file containing the current pivot view with multi-level headers, row hierarchy, grand totals, and subtotals
-**Plans**: 2 plans
+  2. Drill-through data is fetched via a dedicated REST endpoint (`/api/drill-through`) called directly from React — Dash callbacks are not used, so any row count is supported without serialization limits
+  3. The REST endpoint applies the cell's exact pivot coordinate filters server-side (DuckDB) and returns paginated results
+  4. The drill-through modal paginates server-side — each page request hits the endpoint with `?page=N&page_size=500`; no full dataset is ever sent to the browser
+  5. The drill-through modal supports server-side column sorting and a text filter, both passed as query params to the endpoint
+  6. Clicking "Export to Excel" downloads a .xlsx file containing the current pivot view with multi-level headers, row hierarchy, grand totals, and subtotals
+**Plans**: TBD
 
-Plans:
-- [ ] 05-01-PLAN.md — Add Filters drop zone and min/max aggregation options to sidebar
-- [ ] 05-02-PLAN.md — Harden drag-drop with validation, duplicate prevention, empty state, and regression tests
-
-### Phase 7: Code Quality Refactor
-**Goal**: The frontend codebase is maintainable — no file exceeds ~400 lines, crashes show error UI instead of blank screens, and shared logic is not duplicated
+### Phase 7: Column Display & UI States
+**Goal**: Every column state — pinned, sorted, hidden, resized — renders with correct visual indicators and sensible defaults; combined states work without visual glitches
 **Depends on**: Phase 6
+**Requirements**: UI-01, UI-02, UI-03, UI-04, UI-05, UI-06
+**Success Criteria** (what must be TRUE):
+  1. Pinned columns display a shadow or border separator and remain fixed during horizontal scroll
+  2. Sorted columns show a visible ascending/descending indicator on the column header; the active sort column is visually distinct
+  3. Hidden columns can be toggled via the column visibility panel; their visibility state persists across filter changes and data refreshes
+  4. Column resize handles appear on header hover; resized widths persist during scroll and after data refresh
+  5. Combined column states (e.g., a column that is simultaneously pinned, sorted, and resized) display without visual conflict or layout breakage
+  6. Default column widths, row heights, and header heights are visually balanced and consistent across all data densities
+**Plans**: TBD
+
+### Phase 8: Code Quality Refactor
+**Goal**: The frontend codebase is maintainable — no file exceeds ~400 lines, crashes show error UI instead of blank screens, and shared logic is not duplicated
+**Depends on**: Phase 7
 **Requirements**: CODE-01, CODE-02, CODE-03, CODE-04, QUAL-03, QUAL-04
 **Success Criteria** (what must be TRUE):
   1. The main React component file is under 400 lines; logic is split into focused sub-components and hooks
@@ -164,15 +175,11 @@ Plans:
   3. Filter logic exists in exactly one place (shared hook or utility); no duplicate implementations across components
   4. The duplicate `run_pivot_arrow()` method in controller.py is removed with no regression in existing tests
   5. Column name sanitization in the backend uses Ibis parameter binding, eliminating SQL injection risk
-**Plans**: 2 plans
+**Plans**: TBD
 
-Plans:
-- [ ] 05-01-PLAN.md — Add Filters drop zone and min/max aggregation options to sidebar
-- [ ] 05-02-PLAN.md — Harden drag-drop with validation, duplicate prevention, empty state, and regression tests
-
-### Phase 8: Packaging, Docs & CI/CD
+### Phase 9: Packaging, Docs & CI/CD
 **Goal**: Any Python developer can `pip install dash-tanstack-pivot`, find clear documentation, and the project has automated testing and publishing
-**Depends on**: Phase 7
+**Depends on**: Phase 8
 **Requirements**: PKG-01, PKG-02, PKG-03, PKG-04, PKG-05, DOC-01, DOC-02, DOC-03, DOC-04, CI-01, CI-02, CI-03
 **Success Criteria** (what must be TRUE):
   1. `pip install dash-tanstack-pivot` installs the component cleanly; `import dash_tanstack_pivot` succeeds with no missing dependency errors
@@ -180,26 +187,23 @@ Plans:
   3. The README contains a working 10-line minimal example and all Python props are documented with types and defaults
   4. At least three example Dash apps (basic DataFrame, hierarchical, SQL-connected) exist and run without errors
   5. A GitHub Actions workflow runs Python tests and JS build on every push, and publishes to PyPI on version tag push
-**Plans**: 2 plans
-
-Plans:
-- [ ] 05-01-PLAN.md — Add Filters drop zone and min/max aggregation options to sidebar
-- [ ] 05-02-PLAN.md — Harden drag-drop with validation, duplicate prevention, empty state, and regression tests
+**Plans**: TBD
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 3.1 → 3.2 → 4 → 5 → 6 → 7 → 8
+Phases execute in numeric order: 1 → 2 → 3 → 3.1 → 3.2 → 4 → 5 → 6 → 7 → 8 → 9
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Test Audit & Baseline | 4/4 | Complete   | 2026-03-13 |
+| 1. Test Audit & Baseline | 4/4 | Complete | 2026-03-13 |
 | 2. Data Correctness Bugs | 4/4 | Complete | 2026-03-13 |
 | 3. Virtual Scroll & UI Bugs | 4/4 | Complete | 2026-03-13 |
-| 3.1. Debug Instrumentation + Grand Total Fix | 0/2 | Complete    | 2026-03-13 |
+| 3.1. Debug Instrumentation + Grand Total Fix | 2/2 | Complete | 2026-03-13 |
 | 3.2. Test Harness Hardening | 2/2 | Complete | 2026-03-14 |
-| 4. Data Input API | 2/3 | Complete    | 2026-03-14 |
-| 5. Field Zone UI | 0/TBD | Not started | - |
+| 4. Data Input API | 3/3 | Complete | 2026-03-14 |
+| 5. Field Zone UI | 1/2 | In Progress | - |
 | 6. Drill-Through & Excel Export | 0/TBD | Not started | - |
-| 7. Code Quality Refactor | 0/TBD | Not started | - |
-| 8. Packaging, Docs & CI/CD | 0/TBD | Not started | - |
+| 7. Column Display & UI States | 0/TBD | Not started | - |
+| 8. Code Quality Refactor | 0/TBD | Not started | - |
+| 9. Packaging, Docs & CI/CD | 0/TBD | Not started | - |

@@ -50,9 +50,9 @@
 
 ### Field Zone UI
 
-- [ ] **FIELD-01**: Sidebar contains four drop zones: Rows, Columns, Values, Filters
-- [ ] **FIELD-02**: User can drag any available field into any drop zone
-- [ ] **FIELD-03**: Dropping a field into Values zone shows aggregation selector (sum/avg/count/min/max)
+- [x] **FIELD-01**: Sidebar contains four drop zones: Rows, Columns, Values, Filters
+- [x] **FIELD-02**: User can drag any available field into any drop zone
+- [x] **FIELD-03**: Dropping a field into Values zone shows aggregation selector (sum/avg/count/min/max)
 - [ ] **FIELD-04**: Removing a field from a zone updates the pivot immediately
 - [ ] **FIELD-05**: Field zone state is reflected back to Python via Dash props (bidirectional)
 - [ ] **FIELD-06**: Field zone initial state can be set from Python props
@@ -60,10 +60,11 @@
 ### Drill-Through
 
 - [ ] **DRILL-01**: Clicking any aggregated cell triggers drill-through action
-- [ ] **DRILL-02**: Drill-through displays a modal/panel showing the source rows for that cell
-- [ ] **DRILL-03**: Source rows are fetched server-side using the cell's pivot coordinate filters
-- [ ] **DRILL-04**: Drill-through modal is paginated (handles large source sets)
-- [ ] **DRILL-05**: Drill-through modal supports column sorting and basic filtering
+- [ ] **DRILL-02**: Drill-through displays a modal showing the source rows for that cell
+- [ ] **DRILL-03**: Source rows are fetched via a dedicated REST endpoint (`/api/drill-through`) called directly from React — no Dash callback involved, no prop serialization limit
+- [ ] **DRILL-04**: Drill-through modal paginates server-side (`?page=N&page_size=500`); full dataset is never sent to the browser
+- [ ] **DRILL-05**: Drill-through modal supports server-side column sorting and text filter, both passed as query params
+- [ ] **DRILL-06**: The `/api/drill-through` REST endpoint applies the cell's exact pivot coordinate filters using DuckDB and returns only the requested page
 
 ### Excel Export
 
@@ -161,9 +162,9 @@
 | API-04 | Phase 4 - Data Input API | Complete |
 | API-05 | Phase 4 - Data Input API | Complete |
 | API-06 | Phase 4 - Data Input API | Complete |
-| FIELD-01 | Phase 5 - Field Zone UI | Pending |
-| FIELD-02 | Phase 5 - Field Zone UI | Pending |
-| FIELD-03 | Phase 5 - Field Zone UI | Pending |
+| FIELD-01 | Phase 5 - Field Zone UI | Complete |
+| FIELD-02 | Phase 5 - Field Zone UI | Complete |
+| FIELD-03 | Phase 5 - Field Zone UI | Complete |
 | FIELD-04 | Phase 5 - Field Zone UI | Pending |
 | FIELD-05 | Phase 5 - Field Zone UI | Pending |
 | FIELD-06 | Phase 5 - Field Zone UI | Pending |
