@@ -16,7 +16,7 @@ This is a brownfield project with a substantial existing codebase (~65 test file
 - [x] **Phase 3.1: Debug Instrumentation + Grand Total Fix** [INSERTED] - Add request/response debug logging to adapter, diagnose and fix duplicate grand total row, add regression (completed 2026-03-13)
 - [x] **Phase 3.2: Test Harness Hardening** [INSERTED] - Fix unguarded app import in test_frontend_contract.py, remove dead except block in app.py (completed 2026-03-14)
 - [x] **Phase 4: Data Input API** - Unify data prop to accept DataFrame, polars, Ibis, or connection string with auto-detection (completed 2026-03-14)
-- [x] **Phase 5: Field Zone UI** - Complete drag-and-drop sidebar with four zones, aggregation selector, bidirectional Dash props (completed 2026-03-14)
+- [ ] **Phase 5: Field Zone UI** - Complete drag-and-drop sidebar with four zones, aggregation selector, bidirectional Dash props
 - [ ] **Phase 6: Drill-Through & Excel Export** - Cell drill-through modal (server-side via REST endpoint, not Dash callbacks) with pagination, and Excel .xlsx download
 - [ ] **Phase 7: Column Display & UI States** - Review and correct all column states (pinned, sorted, hidden, resized), their visual indicators, and UI defaults
 - [ ] **Phase 8: Code Quality Refactor** - Split 1500-line component, add error boundaries, fix stale closures and filter duplication
@@ -86,7 +86,7 @@ Plans:
   2. Exactly one grand total row appears in every backend response that includes totals — never zero, never two
   3. The pivot table displays the grand total row exactly once at the correct position
   4. A regression test asserts single grand total row presence per response
-**Plans**: 2 plans
+**Plans**: 4 plans
 
 Plans:
 - [ ] 03.1-01-PLAN.md — Write failing regression tests for BUG-14 (grand total duplication)
@@ -99,7 +99,7 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. `tests/test_frontend_contract.py` collection does not execute any data-generation or DuckDB initialization code
   2. `dash_presentation/app.py` `update_pivot_table` callback has exactly one `except Exception` block
-**Plans**: 2 plans
+**Plans**: 4 plans
 
 Plans:
 - [x] 03.2-01-PLAN.md - Make dash app/bootstrap import-safe and move app smoke import behind a test boundary
@@ -133,11 +133,13 @@ Plans:
   4. Removing a field from any zone updates the pivot immediately without a full page reload
   5. The Python callback receives the current field zone configuration as a Dash prop update
   6. Setting field zone props from Python pre-populates the sidebar zones on initial render
-**Plans**: 2 plans
+**Plans**: 4 plans
 
 Plans:
 - [x] 05-01-PLAN.md — Add Filters drop zone and min/max aggregation options to sidebar
 - [x] 05-02-PLAN.md — Harden drag-drop with validation, duplicate prevention, empty state, and regression tests
+- [x] 05-03-PLAN.md — Fix sidebar filter-chip popover anchoring and harden viewport clamping
+- [ ] 05-04-PLAN.md — Pending
 
 ### Phase 6: Drill-Through & Excel Export
 **Goal**: Users can investigate any aggregated cell by seeing its source rows in a modal, and can download the current pivot view as an Excel file
@@ -202,8 +204,10 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 → 3.2 → 4 → 5 → 6
 | 3.1. Debug Instrumentation + Grand Total Fix | 2/2 | Complete | 2026-03-13 |
 | 3.2. Test Harness Hardening | 2/2 | Complete | 2026-03-14 |
 | 4. Data Input API | 3/3 | Complete | 2026-03-14 |
-| 5. Field Zone UI | 2/2 | Complete | 2026-03-14 |
+| 5. Field Zone UI | 3/4 | In Progress | - |
 | 6. Drill-Through & Excel Export | 0/TBD | Not started | - |
 | 7. Column Display & UI States | 0/TBD | Not started | - |
 | 8. Code Quality Refactor | 0/TBD | Not started | - |
 | 9. Packaging, Docs & CI/CD | 0/TBD | Not started | - |
+
+

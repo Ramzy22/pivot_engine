@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: in_progress
-stopped_at: Completed 05-field-zone-ui-02-PLAN.md
-last_updated: "2026-03-14T13:45:00.000Z"
-last_activity: 2026-03-14 - Phase 05 completed; field zones now validate drag-drop, prevent duplicate inserts, and round-trip to Python
+status: planning
+stopped_at: Completed 05-field-zone-ui-03-PLAN.md
+last_updated: "2026-03-14T15:00:04.809Z"
+last_activity: 2026-03-14 - Phase 05 plan 03 completed; sidebar and header filter popovers now share anchor geometry and clamp within the viewport
 progress:
   total_phases: 11
-  completed_phases: 7
-  total_plans: 21
-  completed_plans: 21
-  percent: 100
+  completed_phases: 6
+  total_plans: 23
+  completed_plans: 22
+  percent: 96
 ---
 
 # Project State
@@ -21,21 +21,21 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-13)
 
 **Core value:** A Python developer adds an enterprise-grade pivot table to any Dash app in under 10 lines of code - no JS knowledge, no database config, no performance tuning required.
-**Current focus:** Phase 6 - Drill-Through & Excel Export
+**Current focus:** Phase 5 - Field Zone UI
 
 ## Current Position
 
-Phase: 6 of 11 (Drill-Through & Excel Export)
-Plan: 0 of TBD in current phase
-Status: Ready for planning
-Last activity: 2026-03-14 - Phase 05 completed; field zones now validate drag-drop, prevent duplicate inserts, and round-trip to Python
+Phase: 5 of 11 (Field Zone UI)
+Plan: 4 of 4 in current phase
+Status: Ready for execution
+Last activity: 2026-03-14 - Phase 05 plan 03 completed; sidebar and header filter popovers now share anchor geometry and clamp within the viewport
 
-Progress: [##########] 100%
+Progress: [██████████] 96%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 21
+- Total plans completed: 22
 - Average duration: ~5 min
 - Total execution time: ~0.9 hours
 
@@ -48,7 +48,7 @@ Progress: [##########] 100%
 | 03-virtual-scroll-ui-bugs | 4 | 18 min | 4.5 min |
 
 **Recent Trend:**
-- Last 5 plans: 03.2-02, 04-01, 04-02, 05-01, 05-02
+- Last 5 plans: 04-01, 04-02, 04-03, 05-02, 05-03
 - Trend: steady
 
 *Updated after each plan completion*
@@ -73,6 +73,7 @@ Progress: [##########] 100%
 | Phase 04-data-input-api P03 | 4 | 2 tasks | 1 files |
 | Phase 05-field-zone-ui P01 | 3 min | 2 tasks | 1 files |
 | Phase 05-field-zone-ui P02 | 1 min | 2 tasks | 2 files |
+| Phase 05-field-zone-ui P03 | 7 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -123,6 +124,8 @@ Recent decisions affecting current work:
 - [Phase 05-field-zone-ui]: Made the existing filter-specific sidebar logic reachable by adding the missing Filters zone instead of duplicating handlers
 - [Phase 05-field-zone-ui]: Left unrelated full-suite failures deferred because they were outside this plan's target files and backend/UI write scope
 - [Phase 05-field-zone-ui]: Covered FIELD-05 and FIELD-06 at the Python boundary by asserting serialized Dash component props rather than adding a separate frontend harness
+- [Phase 05-field-zone-ui]: Reused the existing filterAnchorEl for sidebar filter chips so header and sidebar popovers stay on one anchor path
+- [Phase 05-field-zone-ui]: FilterPopover now returns null until anchor geometry exists instead of rendering at the viewport origin
 
 ### Pending Todos
 
@@ -134,6 +137,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-14T13:42:33.082Z
-Stopped at: Completed 05-field-zone-ui-02-PLAN.md
+Last session: 2026-03-14T15:00:04.802Z
+Stopped at: Completed 05-field-zone-ui-03-PLAN.md
 Resume file: None
