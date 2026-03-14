@@ -182,7 +182,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 → 3.2 → 4 → 5 → 6
 | 3. Virtual Scroll & UI Bugs | 4/4 | Complete | 2026-03-13 |
 | 3.1. Debug Instrumentation + Grand Total Fix | 0/2 | Complete    | 2026-03-13 |
 | 3.2. Test Harness Hardening | 2/2 | Complete | 2026-03-14 |
-| 4. Data Input API | 0/3 | Not started | - |
+| 4. Data Input API | 2/3 | In Progress|  |
 | 5. Field Zone UI | 0/TBD | Not started | - |
 | 6. Drill-Through & Excel Export | 0/TBD | Not started | - |
 | 7. Code Quality Refactor | 0/TBD | Not started | - |

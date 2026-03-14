@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-03-14T12:44:26.037Z"
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-03-14T12:47:43.986Z"
 last_activity: 2026-03-14 - Phase 3.2 completed; app bootstrap is lazy and frontend contract tests are green
 progress:
   total_phases: 10
   completed_phases: 5
   total_plans: 19
-  completed_plans: 17
+  completed_plans: 18
   percent: 50
 ---
 
@@ -69,6 +69,7 @@ Progress: [#####-----] 50%
 | Phase 03.2-test-harness-hardening P01 | 9 | 2 tasks | 2 files |
 | Phase 03.2-test-harness-hardening P02 | 7 | 2 tasks | 1 files |
 | Phase 04-data-input-api P01 | 3 | 1 tasks | 1 files |
+| Phase 04-data-input-api P02 | 2 | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -111,6 +112,9 @@ Recent decisions affecting current work:
  - [Phase 03.2-test-harness-hardening]: `update_pivot_table` keeps a single terminal main-path `except Exception`; inner drill-through and update handlers remain intact
 - [Phase 04-data-input-api]: Tests import from pivot_engine.pivot_engine.data_input — RED state is ModuleNotFoundError (expected)
 - [Phase 04-data-input-api]: test_connection_string uses a real temp DuckDB file so connection_string URI resolves correctly
+- [Phase 04-data-input-api]: Lazy optional-dep detection via module name prefix avoids top-level pandas/polars imports in data_input.py
+- [Phase 04-data-input-api]: DataInputError subclasses TypeError so existing isinstance guards remain compatible
+- [Phase 04-data-input-api]: Auto-fixed NamedTemporaryFile Windows bug: os.unlink before duckdb.connect so DuckDB creates fresh DB file
 
 ### Pending Todos
 
@@ -122,6 +126,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-14T12:44:26.034Z
-Stopped at: Completed 04-01-PLAN.md
+Last session: 2026-03-14T12:47:43.983Z
+Stopped at: Completed 04-02-PLAN.md
 Resume file: None
