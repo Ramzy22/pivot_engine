@@ -33,6 +33,92 @@ def _dedup_grand_total(rows: list) -> list:
     return result
 
 
+def _move_grand_total_to_end(rows: list) -> list:
+    """Keep at most one grand total row and place it after all regular rows."""
+    regular_rows = []
+    grand_total_row = None
+
+    for row in rows:
+        if row.get("_isTotal") or row.get("_id") == "Grand Total" or row.get("_path") == "__grand_total__":
+            if grand_total_row is None:
+                grand_total_row = row
+            continue
+        regular_rows.append(row)
+
+    if grand_total_row is not None:
+        regular_rows.append(grand_total_row)
+
+    return regular_rows
+
+
+def _order_hierarchical_rows(rows: list) -> list:
+    """Return rows in parent-before-children order while preserving sibling order."""
+    if not rows:
+        return rows
+
+    regular_rows = []
+    grand_total_rows = []
+    for row in rows:
+        if row.get("_isTotal") or row.get("_id") == "Grand Total" or row.get("_path") == "__grand_total__":
+            grand_total_rows.append(row)
+        else:
+            regular_rows.append(row)
+
+    if not regular_rows:
+        return grand_total_rows
+
+    path_to_row = {}
+    first_seen = {}
+    subtree_first_seen = {}
+    children_by_parent = {}
+
+    for index, row in enumerate(regular_rows):
+        path = row.get("_path")
+        if not path:
+            continue
+        path_to_row[path] = row
+        first_seen[path] = index
+
+    for path in path_to_row:
+        subtree_first_seen[path] = min(
+            first_seen[other_path]
+            for other_path in path_to_row
+            if other_path == path or other_path.startswith(f"{path}|||")
+        )
+
+    root_paths = []
+    for path in path_to_row:
+        parent_path = path.rsplit("|||", 1)[0] if "|||" in path else None
+        if parent_path and parent_path in path_to_row:
+            children_by_parent.setdefault(parent_path, []).append(path)
+        else:
+            root_paths.append(path)
+
+    def sort_paths(paths: list) -> list:
+        return sorted(paths, key=lambda path: subtree_first_seen.get(path, first_seen.get(path, 0)))
+
+    ordered_rows = []
+    visited = set()
+
+    def append_subtree(path: str):
+        if path in visited:
+            return
+        visited.add(path)
+        ordered_rows.append(path_to_row[path])
+        for child_path in sort_paths(children_by_parent.get(path, [])):
+            append_subtree(child_path)
+
+    for root_path in sort_paths(root_paths):
+        append_subtree(root_path)
+
+    for row in regular_rows:
+        path = row.get("_path")
+        if not path or path not in visited:
+            ordered_rows.append(row)
+
+    return ordered_rows + grand_total_rows
+
+
 class TanStackOperation(str, Enum):
     """TanStack operation types"""
     GET_DATA = "get_data"
@@ -80,7 +166,31 @@ class TanStackPivotAdapter:
         self.controller = controller
         self.hierarchy_state = {}  # Store expansion state
         self._debug = debug
-    
+
+    def load_data(self, data, table_name: str) -> None:
+        """
+        Load data into the pivot engine from any supported source type.
+
+        Accepts pandas DataFrame, polars DataFrame, Ibis table expression,
+        connection string dict, or PyArrow Table. Auto-detects the type and
+        converts to the engine's native Arrow representation.
+
+        Parameters
+        ----------
+        data : pd.DataFrame | pl.DataFrame | ibis.Table | dict | pa.Table
+            The data source.
+        table_name : str
+            The name under which the table will be registered. Use the same
+            table_name in pivot requests to query this data.
+
+        Raises
+        ------
+        DataInputError
+            If the data type is not supported.
+        """
+        from .data_input import normalize_data_input  # noqa: PLC0415  (lazy import)
+        normalize_data_input(data, table_name, self.controller)
+
     def _log_request(self, method: str, request: "TanStackRequest", **extra):
         if not self._debug:
             return
@@ -510,6 +620,19 @@ class TanStackPivotAdapter:
             # Signal to load all levels/nodes
             target_paths = [['__ALL__']]
 
+        if hasattr(self.controller, 'run_hierarchy_view'):
+            hierarchy_view = await self.controller.run_hierarchy_view(pivot_spec, target_paths)
+            tanstack_result = self.convert_pivot_result_to_tanstack_format(
+                hierarchy_view.get("rows", []), request
+            )
+            if hierarchy_view.get("total_rows") is not None:
+                tanstack_result.total_rows = hierarchy_view["total_rows"]
+            tanstack_result.data = _order_hierarchical_rows(
+                _move_grand_total_to_end(_dedup_grand_total(tanstack_result.data))
+            )
+            self._log_response("handle_hierarchical_request", tanstack_result.data)
+            return tanstack_result
+
         # We use the batch loading method which is more efficient for multiple levels
         # and returns the {path_key: [nodes]} format expected by the traversal.
         try:
@@ -543,6 +666,9 @@ class TanStackPivotAdapter:
                 hierarchy_result = result
             tanstack_result = self.convert_pivot_result_to_tanstack_format(
                 hierarchy_result, request
+            )
+            tanstack_result.data = _order_hierarchical_rows(
+                _move_grand_total_to_end(_dedup_grand_total(tanstack_result.data))
             )
             return tanstack_result
 
@@ -633,6 +759,9 @@ class TanStackPivotAdapter:
         tanstack_result = self.convert_pivot_result_to_tanstack_format(
             visible_rows, request
         )
+        tanstack_result.data = _order_hierarchical_rows(
+            _move_grand_total_to_end(_dedup_grand_total(tanstack_result.data))
+        )
 
         self._log_response("handle_hierarchical_request", visible_rows)
         return tanstack_result
@@ -656,6 +785,20 @@ class TanStackPivotAdapter:
         if expanded_paths is True:
             target_paths = [['__ALL__']]
 
+        if hasattr(self.controller, 'run_hierarchy_view'):
+            hierarchy_view = await self.controller.run_hierarchy_view(
+                pivot_spec, target_paths, start_row, end_row
+            )
+            tanstack_result = self.convert_pivot_result_to_tanstack_format(
+                hierarchy_view.get("rows", []), request, version=request.version
+            )
+            if hierarchy_view.get("total_rows") is not None:
+                tanstack_result.total_rows = hierarchy_view["total_rows"]
+            tanstack_result.data = _order_hierarchical_rows(
+                _move_grand_total_to_end(_dedup_grand_total(tanstack_result.data))
+            )
+            return tanstack_result
+
         # Use the controller's virtual scrolling method
         if hasattr(self.controller, 'run_virtual_scroll_hierarchical'):
             # For hierarchical virtual scrolling
@@ -675,19 +818,25 @@ class TanStackPivotAdapter:
 
                 # Unconditional single-grand-total enforcement: regardless of internal path taken,
                 # filter _isTotal rows to at most one before returning.
-                tanstack_result.data = _dedup_grand_total(tanstack_result.data)
+                tanstack_result.data = _order_hierarchical_rows(
+                    _move_grand_total_to_end(_dedup_grand_total(tanstack_result.data))
+                )
                 return tanstack_result
 
             except Exception as e:
                 print(f"Virtual scroll failed: {e}, falling back to hierarchical load")
                 # Fallback to direct hierarchical load which is un-materialized but accurate
                 fallback_result = await self.handle_hierarchical_request(request, expanded_paths)
-                fallback_result.data = _dedup_grand_total(fallback_result.data)
+                fallback_result.data = _order_hierarchical_rows(
+                    _move_grand_total_to_end(_dedup_grand_total(fallback_result.data))
+                )
                 return fallback_result
         else:
             # Fallback: Use regular hierarchical method
             fallback_result = await self.handle_hierarchical_request(request, expanded_paths)
-            fallback_result.data = _dedup_grand_total(fallback_result.data)
+            fallback_result.data = _order_hierarchical_rows(
+                _move_grand_total_to_end(_dedup_grand_total(fallback_result.data))
+            )
             return fallback_result
 
     def get_schema_info(self, table_name: str) -> Dict[str, Any]:
