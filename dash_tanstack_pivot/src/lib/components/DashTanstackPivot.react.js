@@ -1,3 +1,4 @@
+// DashTanstackPivot - Enterprise Grade Pivot Table
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import {
@@ -10,1439 +11,23 @@ import {
 import { useVirtualizer } from '@tanstack/react-virtual';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
-
-// --- Shared Logic ---
-const getKey = (prefix, field, agg) => prefix ? `${prefix}_${field}_${agg}` : `${field}_${agg}`;
-
-const formatValue = (value, fmt) => {
-    if (value === null || value === undefined) return '';
-    if (typeof value !== 'number') return value;
-    if (!fmt) return value.toLocaleString();
-    
-    try {
-        if (fmt === 'currency') return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
-        if (fmt === 'accounting') return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', currencySign: 'accounting' }).format(value);
-        if (fmt === 'percent') return new Intl.NumberFormat('en-US', { style: 'percent', maximumFractionDigits: 2 }).format(value);
-        if (fmt === 'scientific') return value.toExponential(2);
-        if (fmt.startsWith('fixed')) {
-            const parts = fmt.split(':');
-            const decimals = parts.length > 1 ? parseInt(parts[1]) : 2;
-            return value.toFixed(decimals);
-        }
-    } catch (e) {
-        console.warn('Format error', e);
-    }
-    return value.toLocaleString();
-};
-
-const Sparkline = ({ data = [], width = 100, height = 30, color = '#1976d2' }) => {
-    if (!data || data.length < 2) return null;
-    const min = Math.min(...data);
-    const max = Math.max(...data);
-    const range = max - min || 1;
-    const padding = 2;
-    const innerWidth = width - padding * 2;
-    const innerHeight = height - padding * 2;
-
-    // Calculate points with padding
-    const points = data.map((d, i) => ({
-        x: padding + (i / (data.length - 1)) * innerWidth,
-        y: padding + innerHeight - ((d - min) / range) * innerHeight
-    }));
-
-    return (
-        <svg width={width} height={height} style={{ overflow: 'hidden' }}>
-            <path
-                d={`M ${points.map(p => `${p.x},${p.y}`).join(' L ')}`}
-                fill="none"
-                stroke={color}
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-            />
-        </svg>
-    );
-};
-
-// --- Icons ---
-const Icons = {
-    SortAsc: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z"/></svg>,
-    SortDesc: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20 12l-1.41-1.41L13 16.17V4h-2v12.17l-5.58-5.59L4 12l8 8 8-8z"/></svg>,
-    Export: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>,
-    Search: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>,
-    ChevronRight: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>,
-    ChevronDown: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg>,
-    DragIndicator: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="#bdbdbd"><path d="M11 18c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm-2-8c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6 4c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>,
-    Close: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>,
-    Spacing: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>,
-    ColExpand: () => <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>,
-    ColCollapse: () => <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13H5v-2h14v2z"/></svg>,
-    Filter: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>,
-    Menu: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>,
-    MoreVert: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>,
-    PinLeft: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M13 12H7v1.5L4.5 11 7 8.5V10h6v2zm6.41-7.12l-1.42-1.41-4.83 4.83c-.37-.13-.77-.21-1.19-.21-1.91 0-3.47 1.55-3.47 3.47 0 1.92 1.56 3.47 3.47 3.47 1.92 0 3.47-1.55 3.47-3.47 0-.42-.08-.82-.21-1.19l4.83-4.83-1.42-1.41z"/></svg>,
-    PinRight: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M11 12h6v-1.5l2.5 2.5-2.5 2.5V14h-6v-2zm-6.41 7.12l1.42 1.41 4.83-4.83c.37.13.77.21 1.19.21 1.91 0 3.47-1.55 3.47-3.47 0-1.92-1.56-3.47-3.47-3.47-1.92 0-3.47 1.55-3.47 3.47 0 .42.08.82.21 1.19l-4.83 4.83 1.42 1.41z"/></svg>,
-    Unpin: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16 9V4l1 1V3H7v1l1-1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>,
-    Visibility: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>,
-    VisibilityOff: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.82l2.92 2.92c1.51-1.39 2.72-3.13 3.44-5.04-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.17c0-1.66-1.34-3-3-3l-.17.02z"/></svg>,
-    Group: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 1.34 5 3 6.34 3 8 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>,
-    Lock: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>
-};
-
-// --- Sort Helpers ---
-const alphanumeric = (rowA, rowB, columnId) => {
-    const a = rowA.getValue(columnId);
-    const b = rowB.getValue(columnId);
-    // Use localeCompare for natural alphanumeric sort
-    // sensitivity: 'base' ignores case (default behavior often desired)
-    // We can make this configurable later via sortOptions
-    return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
-};
-
-const DateRangeFilter = ({ onFilter, currentFilter, theme }) => {
-    const styles = getStyles(theme || { primary: '#1976d2', border: '#e0e0e0', headerBg: '#f5f5f5', text: '#212121' });
-    
-    const isMulti = currentFilter && currentFilter.conditions;
-    const [operator, setOperator] = useState(isMulti ? currentFilter.operator : 'AND');
-    const [conditions, setConditions] = useState(() => {
-        if (isMulti) return currentFilter.conditions;
-        if (currentFilter && currentFilter.value && !currentFilter.conditions) {
-             // Handle legacy single value or specialized filter structure
-             return [{ type: 'eq', value: currentFilter.value }];
-        }
-        return [{ type: 'between', value: '', value2: '' }];
-    });
-
-    const updateCondition = (index, key, value) => {
-        const newConditions = [...conditions];
-        newConditions[index][key] = value;
-        setConditions(newConditions);
-    };
-
-    const addCondition = () => {
-        setConditions([...conditions, { type: 'between', value: '', value2: '' }]);
-    };
-
-    const removeCondition = (index) => {
-        const newConditions = conditions.filter((_, i) => i !== index);
-        setConditions(newConditions);
-    };
-
-    const apply = () => {
-        const validConditions = conditions.filter(c => {
-            if (c.type === 'between') return c.value && c.value2;
-            return c.value;
-        });
-        
-        if (validConditions.length > 0) {
-            onFilter({ operator, conditions: validConditions });
-        } else {
-            onFilter(null);
-        }
-    };
-
-    const setPreset = (days) => {
-        const e = new Date();
-        const s = new Date();
-        s.setDate(e.getDate() - days);
-        const fmt = d => d.toISOString().split('T')[0];
-        // For presets, we reset to a single condition
-        setConditions([{ type: 'between', value: fmt(s), value2: fmt(e) }]);
-    };
-
-    return (
-        <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
-            <div style={{display: 'flex', justifyContent: 'flex-end', gap: '4px'}}>
-                <button onClick={() => setOperator('AND')} style={{...styles.btn, padding: '2px 6px', fontSize: '10px', background: operator === 'AND' ? theme.primary : '#eee', color: operator === 'AND' ? '#fff' : '#333'}}>AND</button>
-                <button onClick={() => setOperator('OR')} style={{...styles.btn, padding: '2px 6px', fontSize: '10px', background: operator === 'OR' ? theme.primary : '#eee', color: operator === 'OR' ? '#fff' : '#333'}}>OR</button>
-            </div>
-
-            <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap'}}>
-                <button onClick={() => setPreset(0)} style={{...styles.btn, fontSize:'11px', padding:'4px 8px'}}>Today</button>
-                <button onClick={() => setPreset(7)} style={{...styles.btn, fontSize:'11px', padding:'4px 8px'}}>Last 7d</button>
-                <button onClick={() => setPreset(30)} style={{...styles.btn, fontSize:'11px', padding:'4px 8px'}}>Last 30d</button>
-            </div>
-
-            <div style={{display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto'}}>
-                {conditions.map((cond, index) => (
-                    <div key={index} style={{display: 'flex', flexDirection: 'column', gap: '4px', border: '1px solid #f0f0f0', padding: '8px', borderRadius: '4px'}}>
-                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                            <select value={cond.type} onChange={e => updateCondition(index, 'type', e.target.value)} style={{padding:'2px', borderRadius:'2px', border:'1px solid #ddd', fontSize: '11px', width: '100px'}}>
-                                <option value="between">Between</option>
-                                <option value="eq">Equals</option>
-                                <option value="gt">After</option>
-                                <option value="lt">Before</option>
-                            </select>
-                            {conditions.length > 1 && <span onClick={() => removeCondition(index)} style={{cursor: 'pointer'}}><Icons.Close/></span>}
-                        </div>
-                        <div style={{display: 'flex', gap: '4px', alignItems: 'center'}}>
-                            <input type="date" value={cond.value} onChange={e => updateCondition(index, 'value', e.target.value)} style={{border:'1px solid #ddd', borderRadius:'4px', padding:'4px', flex: 1, minWidth: 0, fontSize: '12px'}} />
-                            {cond.type === 'between' && (
-                                <>
-                                    <span>-</span>
-                                    <input type="date" value={cond.value2 || ''} onChange={e => updateCondition(index, 'value2', e.target.value)} style={{border:'1px solid #ddd', borderRadius:'4px', padding:'4px', flex: 1, minWidth: 0, fontSize: '12px'}} />
-                                </>
-                            )}
-                        </div>
-                    </div>
-                ))}
-            </div>
-            
-            <div style={{display: 'flex', gap: '8px'}}>
-                <button onClick={addCondition} style={{...styles.btn, flex: 1, justifyContent: 'center', background: '#f5f5f5', fontSize: '11px'}}>Add</button>
-                <button onClick={apply} style={{...styles.btn, flex: 1, justifyContent: 'center', background: theme.primary, color: '#fff', fontSize: '11px'}}>Apply</button>
-            </div>
-        </div>
-    );
-};
-
-const NumericRangeFilter = ({ onFilter, currentFilter, theme }) => {
-    const [min, setMin] = useState((currentFilter && currentFilter.conditions && currentFilter.conditions[0]) ? currentFilter.conditions[0].value : '');
-    const [max, setMax] = useState((currentFilter && currentFilter.conditions && currentFilter.conditions[0]) ? currentFilter.conditions[0].value2 : '');
-
-    const apply = (mn, mx) => {
-        if (mn !== '' && mx !== '') {
-            onFilter({ operator: 'AND', conditions: [{ type: 'between', value: Number(mn), value2: Number(mx) }] });
-        } else if (mn !== '') {
-            onFilter({ operator: 'AND', conditions: [{ type: 'gte', value: Number(mn) }] });
-        } else if (mx !== '') {
-            onFilter({ operator: 'AND', conditions: [{ type: 'lte', value: Number(mx) }] });
-        } else {
-            onFilter(null);
-        }
-    };
-
-    return (
-        <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
-             <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
-                <input type="number" placeholder="Min" value={min} onChange={e => { setMin(e.target.value); apply(e.target.value, max); }} style={{border:'1px solid #ddd', borderRadius:'4px', padding:'4px', width: '80px'}} />
-                <div style={{flex:1, height:'2px', background:'#eee', position:'relative'}}>
-                     <div style={{position:'absolute', left:'0', right:'0', top:'-1px', height:'4px', background: theme.primary, opacity: 0.3}} />
-                </div>
-                <input type="number" placeholder="Max" value={max} onChange={e => { setMax(e.target.value); apply(min, e.target.value); }} style={{border:'1px solid #ddd', borderRadius:'4px', padding:'4px', width: '80px'}} />
-            </div>
-        </div>
-    );
-};
-
-const MultiSelectFilter = ({ options = [], onFilter, currentFilter }) => {
-    const [search, setSearch] = useState('');
-    const [selected, setSelected] = useState(new Set());
-
-    useEffect(() => {
-        // Initialize from current filter if it's an 'in' type
-        if (currentFilter && currentFilter.conditions && currentFilter.conditions[0] && currentFilter.conditions[0].type === 'in') {
-            setSelected(new Set(currentFilter.conditions[0].value));
-        }
-    }, [currentFilter]);
-
-    const filteredOptions = options.filter(o => String(o).toLowerCase().includes(search.toLowerCase()));
-
-    const toggle = (val) => {
-        const newSet = new Set(selected);
-        if (newSet.has(val)) newSet.delete(val);
-        else newSet.add(val);
-        setSelected(newSet);
-        
-        if (newSet.size > 0) {
-            onFilter({ operator: 'AND', conditions: [{ type: 'in', value: Array.from(newSet) }] });
-        } else {
-            onFilter(null);
-        }
-    };
-
-    return (
-        <div style={{display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px'}}>
-            <input 
-                placeholder="Search..." 
-                value={search} 
-                onChange={e => setSearch(e.target.value)} 
-                style={{border:'1px solid #ddd', borderRadius:'4px', padding:'4px', fontSize:'11px'}} 
-            />
-            <div style={{overflowY: 'auto', flex: 1, border: '1px solid #f0f0f0', borderRadius:'4px'}}>
-                {filteredOptions.length === 0 ? <div style={{padding:'8px', color:'#999', fontSize:'11px'}}>No options...</div> :
-                filteredOptions.map((opt, i) => (
-                    <div key={i} onClick={() => toggle(opt)} style={{display:'flex', gap:'6px', padding:'4px 8px', cursor:'pointer', alignItems:'center', background: selected.has(opt) ? '#e3f2fd' : 'transparent'}}>
-                        <input type="checkbox" checked={selected.has(opt)} readOnly style={{margin:0}} />
-                        <span style={{fontSize:'11px'}}>{opt}</span>
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-};
-
-// --- Helpers ---
-const isGroupColumn = (column) => {
-    return column.columns && column.columns.length > 0;
-};
-
-const hasChildrenInZone = (col, zone) => {
-    const pin = col.getIsPinned();
-    if (!col.columns || col.columns.length === 0) {
-        return pin === zone || (zone === 'unpinned' && !pin);
-    }
-    return col.columns.some(child => hasChildrenInZone(child, zone));
-};
-
-const getAllLeafColumns = (col) => {
-    if (!col.columns || col.columns.length === 0) return [col];
-    return col.columns.flatMap(getAllLeafColumns);
-};
-
-const getAllLeafIdsFromColumn = (column) => {
-    return getAllLeafColumns(column).map(c => c.id);
-};
-
-const ColumnFilter = ({ column, onFilter, currentFilter, options = [], theme, onClose }) => {
-    const styles = getStyles(theme || { primary: '#1976d2', border: '#e0e0e0', headerBg: '#f5f5f5', text: '#212121' });
-    const isLeaf = column.getLeafColumns
-        ? column.getLeafColumns().length === 1
-        : !column.columns;
-
-    if (!isLeaf) {
-        return (
-            <div style={{ padding: '12px', fontSize: '12px', background: theme.background, color: theme.text }}>
-                Filters are available only for value columns.
-            </div>
-        );
-    }
-
-    const leaf = column.getLeafColumns ? column.getLeafColumns()[0] : column;
-    const colId = leaf.id.toLowerCase();
-    const isDate = (leaf.columnDef && leaf.columnDef.meta && leaf.columnDef.meta.type === 'date') || colId.includes('date') || colId.includes('time');
-    const isNumeric = (leaf.columnDef && leaf.columnDef.meta && leaf.columnDef.meta.type === 'number') || colId.includes('sales') || colId.includes('cost') || colId.includes('amount') || colId.includes('price');
-
-    const [tab, setTab] = useState('condition'); // condition, values, smart
-
-    // Auto-select tab based on available options
-    useEffect(() => {
-        if (options && options.length > 0 && tab === 'condition') {
-            setTab('values');
-        } else if (isDate && tab === 'condition') {
-             setTab('date');
-        }
-    }, [options, isDate]);
-
-    // --- Existing Condition Logic ---
-    const isMulti = currentFilter && currentFilter.conditions;
-    const [operator, setOperator] = useState(isMulti ? currentFilter.operator : 'AND');
-    const [conditions, setConditions] = useState(
-        isMulti ? currentFilter.conditions : [{type: 'contains', value: '', caseSensitive: false}]
-    );
-
-    const updateCondition = (index, key, value) => {
-        const newConditions = [...conditions];
-        newConditions[index][key] = value;
-        setConditions(newConditions);
-    };
-    
-    const addCondition = () => {
-        setConditions([...conditions, {type: 'contains', value: '', caseSensitive: false}]);
-    };
-
-    const removeCondition = (index) => {
-        const newConditions = conditions.filter((_, i) => i !== index);
-        setConditions(newConditions);
-    };
-
-    const handleApply = () => {
-        const validConditions = conditions.filter(c => {
-             if (c.type === 'between') return c.value && c.value2;
-             return String(c.value).trim() !== '';
-        });
-        
-        const newFilter = {
-            operator: operator,
-            conditions: validConditions.map(c => {
-                 let finalVal = c.value;
-                 let finalVal2 = c.value2;
-                 
-                 if (isNumeric) {
-                     if (finalVal !== '' && !isNaN(Number(finalVal))) finalVal = Number(finalVal);
-                     if (finalVal2 !== '' && !isNaN(Number(finalVal2))) finalVal2 = Number(finalVal2);
-                 }
-
-                 if (c.type === 'between') {
-                      return { ...c, value: [finalVal, finalVal2] };
-                 }
-                 return { ...c, value: finalVal };
-            })
-        };
-        
-        if (newFilter.conditions.length > 0) {
-            onFilter(newFilter);
-        } else {
-            onFilter(null);
-        }
-        if (onClose) onClose();
-    };
-
-    return (
-        <div style={{display: 'flex', flexDirection: 'column', gap: '8px', color: '#333'}}>
-            <div style={{fontWeight: 600, fontSize: '12px', borderBottom: '1px solid #eee', paddingBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                <span>Filter: {column.header}</span>
-                <div style={{display: 'flex', background: '#f5f5f5', borderRadius: '4px', padding: '2px'}}>
-                    <div onClick={() => setTab('condition')} style={{padding:'2px 8px', fontSize:'10px', cursor:'pointer', borderRadius:'3px', background: tab==='condition'?'#fff':'transparent', boxShadow: tab==='condition'?'0 1px 2px rgba(0,0,0,0.1)':'none'}}>Rules</div>
-                    {options.length > 0 && <div onClick={() => setTab('values')} style={{padding:'2px 8px', fontSize:'10px', cursor:'pointer', borderRadius:'3px', background: tab==='values'?'#fff':'transparent', boxShadow: tab==='values'?'0 1px 2px rgba(0,0,0,0.1)':'none'}}>List</div>}
-                    {isDate && <div onClick={() => setTab('date')} style={{padding:'2px 8px', fontSize:'10px', cursor:'pointer', borderRadius:'3px', background: tab==='date'?'#fff':'transparent', boxShadow: tab==='date'?'0 1px 2px rgba(0,0,0,0.1)':'none'}}>Date</div>}
-                    {isNumeric && <div onClick={() => setTab('numeric')} style={{padding:'2px 8px', fontSize:'10px', cursor:'pointer', borderRadius:'3px', background: tab==='numeric'?'#fff':'transparent', boxShadow: tab==='numeric'?'0 1px 2px rgba(0,0,0,0.1)':'none'}}>Range</div>}
-                </div>
-            </div>
-            
-            <div style={{maxHeight: '300px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px'}}>
-                {tab === 'values' && (
-                    <MultiSelectFilter options={options} onFilter={onFilter} currentFilter={currentFilter} />
-                )}
-
-                {tab === 'date' && (
-                    <DateRangeFilter onFilter={onFilter} currentFilter={currentFilter} theme={theme} />
-                )}
-
-                {tab === 'numeric' && (
-                    <NumericRangeFilter onFilter={onFilter} currentFilter={currentFilter} theme={theme} />
-                )}
-
-                {tab === 'condition' && (
-                    <>
-                        <div style={{display: 'flex', justifyContent: 'flex-end', gap: '4px', marginBottom: '4px'}}>
-                            <button onClick={() => setOperator('AND')} style={{padding: '2px 6px', fontSize: '10px', background: operator === 'AND' ? theme.primary: '#eee', color: operator === 'AND' ? '#fff' : '#333', border: 'none', borderRadius: '2px'}}>AND</button>
-                            <button onClick={() => setOperator('OR')} style={{padding: '2px 6px', fontSize: '10px', background: operator === 'OR' ? theme.primary: '#eee', color: operator === 'OR' ? '#fff' : '#333', border: 'none', borderRadius: '2px'}}>OR</button>
-                        </div>
-                        <div style={{display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '8px'}}>
-                        {conditions.map((cond, index) => (
-                            <div key={index} style={{display: 'flex', flexDirection: 'column', gap: '4px', border: '1px solid #f0f0f0', padding: '8px', borderRadius: '4px'}}>
-                                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                                    <label style={{fontSize:'11px', color: '#666'}}>Condition {index + 1}</label>
-                                    {conditions.length > 1 && <span onClick={() => removeCondition(index)} style={{cursor: 'pointer'}}><Icons.Close/></span>}
-                                </div>
-                                <select value={cond.type} onChange={e => updateCondition(index, 'type', e.target.value)} style={{padding:'4px', borderRadius:'2px', border:'1px solid #ddd'}}>
-                                    <option value="eq">Equals</option>
-                                    <option value="ne">Not Equals</option>
-                                    <option value="contains">Contains</option>
-                                    <option value="startsWith">Starts With</option>
-                                    <option value="endsWith">Ends With</option>
-                                    <option value="gt">Greater Than</option>
-                                    <option value="lt">Less Than</option>
-                                    <option value="between">Between (Range)</option>
-                                    <option value="in">In List</option>
-                                </select>
-                                
-                                {cond.type === 'between' ? (
-                                    <div style={{display: 'flex', gap: '4px'}}>
-                                        <input 
-                                            placeholder="Start" 
-                                            value={cond.value} 
-                                            onChange={e => updateCondition(index, 'value', e.target.value)} 
-                                            style={{padding:'6px', borderRadius:'2px', border:'1px solid #ddd', fontSize: '13px', width: '50%'}}
-                                        />
-                                        <input 
-                                            placeholder="End" 
-                                            value={cond.value2 || ''} 
-                                            onChange={e => updateCondition(index, 'value2', e.target.value)} 
-                                            style={{padding:'6px', borderRadius:'2px', border:'1px solid #ddd', fontSize: '13px', width: '50%'}}
-                                        />
-                                    </div>
-                                ) : (
-                                    <input 
-                                        placeholder="Value..." 
-                                        value={cond.value} 
-                                        onChange={e => updateCondition(index, 'value', e.target.value)} 
-                                        style={{padding:'6px', borderRadius:'2px', border:'1px solid #ddd', fontSize: '13px'}}
-                                    />
-                                )}
-                                
-                                <div style={{display:'flex', alignItems:'center', gap:'4px', marginTop:'2px'}}>
-                                    <input 
-                                        type="checkbox" 
-                                        checked={cond.caseSensitive || false} 
-                                        onChange={e => updateCondition(index, 'caseSensitive', e.target.checked)}
-                                        id={`cs-${index}`}
-                                    />
-                                    <label htmlFor={`cs-${index}`} style={{fontSize:'11px', color:'#555', cursor:'pointer'}}>Match Case</label>
-                                </div>
-                            </div>
-                        ))}
-                        </div>
-                        <button onClick={addCondition} style={{...styles.btn, justifyContent: 'center', background: '#f5f5f5'}}>Add Condition</button>
-                    </>
-                )}
-            </div>
-
-            <div style={{display:'flex', justifyContent: 'space-between', gap: '8px', marginTop: '8px', borderTop: '1px solid #eee', paddingTop: '8px'}}>
-                <button onClick={() => { onFilter(null); if(onClose) onClose(); }} style={{padding: '4px 8px', border:'none', background:'none', cursor:'pointer', color: '#d32f2f', fontSize: '11px'}}>Clear & Close</button>
-                <div style={{display: 'flex', gap: '8px'}}>
-                    {onClose && <button onClick={onClose} style={{padding: '4px 8px', border:'none', background:'none', cursor:'pointer', fontSize: '11px'}}>Close</button>}
-                    {tab === 'condition' && (
-                        <button onClick={handleApply} style={{padding: '4px 12px', background: theme.primary, color: '#fff', border:'none', borderRadius: '2px', cursor:'pointer', fontSize: '11px'}}>
-                            Apply
-                        </button>
-                    )}
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const FilterPopover = ({ column, anchorEl, onClose, onFilter, currentFilter, options = [], theme }) => {
-    const [position, setPosition] = useState({ top: 0, left: 0 });
-    const popoverRef = useRef(null);
-
-    useEffect(() => {
-        // Calculate position to avoid viewport overflow
-        const target = anchorEl || (column instanceof Element ? column : null);
-        if (!target) return;
-
-        const rect = target.getBoundingClientRect();
-        const viewportHeight = window.innerHeight;
-        const viewportWidth = window.innerWidth;
-
-        let top = rect.bottom;
-        let left = rect.left;
-
-        // Check if would overflow bottom
-        if (top + 400 > viewportHeight) {
-            top = rect.top - 400; // Position above
-        }
-
-        // Check if would overflow right
-        if (left + 300 > viewportWidth) {
-            left = viewportWidth - 320; // Adjust to fit
-        }
-
-        setPosition({ top, left });
-    }, [anchorEl, column]);
-
-    return (
-        <div ref={popoverRef}
-            style={{
-                position: 'fixed', // Changed from absolute
-                top: `${position.top}px`,
-                left: `${position.left}px`,
-                background: '#fff',
-                border: '1px solid #ccc',
-                boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                zIndex: 1000,
-                padding: '12px',
-                borderRadius: '4px',
-                width: '300px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '8px',
-                color: '#333'
-            }} onClick={e => e.stopPropagation()}>
-            <ColumnFilter 
-                column={column} 
-                onFilter={onFilter} 
-                currentFilter={currentFilter} 
-                options={options} 
-                theme={theme} 
-                onClose={onClose} 
-            />
-        </div>
-    );
-};
-
-const themes = {
-    light: {
-        name: 'light',
-        primary: '#1976d2',
-        border: '#e0e0e0',
-        headerBg: '#f5f5f5',
-        text: '#212121',
-        textSec: '#757575',
-        hover: '#eeeeee',
-        select: '#e3f2fd',
-        background: '#fff',
-        sidebarBg: '#fafafa'
-    },
-    dark: {
-        name: 'dark',
-        primary: '#90caf9',
-        border: '#424242',
-        headerBg: '#333',
-        text: '#fff',
-        textSec: '#b0b0b0',
-        hover: '#424242',
-        select: '#1e3a5f',
-        background: '#212121',
-        sidebarBg: '#2c2c2c'
-    },
-    material: {
-        name: 'material',
-        primary: '#6200ee',
-        border: '#e0e0e0',
-        headerBg: '#fff',
-        text: '#000',
-        textSec: '#666',
-        hover: '#f5f5f5',
-        select: '#e8eaf6',
-        background: '#fff',
-        sidebarBg: '#fafafa'
-    },
-    balham: {
-        name: 'balham',
-        primary: '#0091ea',
-        border: '#BDC3C7',
-        headerBg: '#F5F7F7',
-        text: '#2c3e50',
-        textSec: '#7f8c8d',
-        hover: '#ecf0f1',
-        select: '#d6eaf8',
-        background: '#fff',
-        sidebarBg: '#fafafa'
-    }
-};
-
-const getStyles = (theme) => ({
-    root: {
-        display: 'flex',
-        flexDirection: 'column',
-        fontFamily: 'Roboto, Helvetica, Arial, sans-serif',
-        height: '100%',
-        background: theme.background,
-        border: `1px solid ${theme.border}`,
-        borderRadius: '4px',
-        overflow: 'hidden',
-        fontSize: '13px',
-        color: theme.text
-    },
-    appBar: {
-        height: '48px',
-        borderBottom: `1px solid ${theme.border}`,
-        display: 'flex',
-        alignItems: 'center',
-        padding: '0 16px',
-        justifyContent: 'space-between',
-        background: theme.headerBg,
-        color: theme.text
-    },
-    searchBox: {
-        display: 'flex',
-        alignItems: 'center',
-        background: theme.text === '#fff' ? '#424242' : '#f5f5f5',
-        borderRadius: '4px',
-        padding: '4px 8px',
-        width: '200px'
-    },
-    sidebar: {
-        width: '320px',
-        minWidth: '320px',
-        borderRight: `1px solid ${theme.border}`,
-        background: theme.sidebarBg,
-        display: 'flex',
-        flexDirection: 'column',
-        padding: '16px',
-        gap: '16px',
-        overflowY: 'auto'
-    },
-    sectionTitle: {
-        fontSize: '11px',
-        fontWeight: 700,
-        textTransform: 'uppercase',
-        color: theme.textSec,
-        marginBottom: '8px'
-    },
-    chip: {
-        background: theme.text === '#fff' ? '#424242' : '#fff',
-        border: `1px solid ${theme.border}`,
-        borderRadius: '4px',
-        padding: '6px 8px',
-        marginBottom: '6px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        cursor: 'grab',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-        position: 'relative',
-        color: theme.text
-    },
-    dropZone: {
-        minHeight: '40px',
-        border: `1px dashed ${theme.border}`,
-        borderRadius: '4px',
-        padding: '8px',
-        background: 'rgba(0,0,0,0.02)'
-    },
-    main: {
-        flex: 1,
-        overflow: 'hidden',
-        position: 'relative',
-        display: 'flex',
-        flexDirection: 'column'
-    },
-    scrollContainer: {
-        flex: 1,
-        overflow: 'auto',
-        position: 'relative'
-    },
-    headerSticky: {
-        position: 'sticky',
-        top: 0,
-        zIndex: 2,
-        background: theme.headerBg,
-        width: 'fit-content',
-        minWidth: '100%'
-    },
-    headerRow: {
-        display: 'flex',
-        width: '100%'
-    },
-    headerCell: {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '0 8px',
-        borderRight: `1px solid ${theme.border}`,
-        borderBottom: `1px solid ${theme.border}`,
-        fontWeight: 600,
-        color: theme.text,
-        position: 'relative',
-        boxSizing: 'border-box',
-        flexShrink: 0,
-        minWidth: 0,
-        overflow: 'hidden',
-        whiteSpace: 'nowrap',
-        textOverflow: 'ellipsis'
-    },
-    pinned: {
-        position: 'sticky',
-        zIndex: 3,
-        background: theme.background
-    },
-    pinnedLeft: {
-        left: 0,
-        borderRight: `1px solid ${theme.border}`
-    },
-    pinnedRight: {
-        right: 0,
-        borderLeft: `1px solid ${theme.border}`
-    },
-    row: {
-        display: 'flex',
-        position: 'absolute',
-        left: 0,
-        width: '100%',
-        boxSizing: 'border-box'
-    },
-    cell: {
-        display: 'flex',
-        alignItems: 'center',
-        padding: '0 8px',
-        borderRight: `1px solid ${theme.border}`,
-        borderBottom: `1px solid ${theme.border}`,
-        background: theme.background,
-        color: theme.text,
-        overflow: 'hidden',
-        whiteSpace: 'nowrap',
-        boxSizing: 'border-box',
-        flexShrink: 0
-    },
-    cellSelected: {
-        background: `${theme.select} !important`,
-        boxShadow: `inset 0 0 0 2px ${theme.primary}`,
-        zIndex: 2,
-        position: 'relative'
-    },
-    btn: {
-        padding: '6px 12px',
-        borderRadius: '4px',
-        border: `1px solid ${theme.border}`,
-        background: 'transparent',
-        cursor: 'pointer',
-        fontSize: '12px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '6px',
-        fontWeight: 500,
-        color: theme.text
-    },
-    dropLine: {
-        position: 'absolute',
-        height: '2px',
-        background: theme.primary,
-        left: 0, right: 0, zIndex: 10, pointerEvents: 'none'
-    },
-    expandedSeparator: {
-        borderBottom: `2px solid ${theme.primary}`
-    },
-    toolPanelSection: {
-        display: 'flex',
-        flexDirection: 'column',
-        borderBottom: `1px solid ${theme.border}44`,
-        marginBottom: '4px',
-        transition: 'all 0.3s ease-in-out'
-    },
-    toolPanelSectionHeader: {
-        display: 'flex',
-        alignItems: 'center',
-        padding: '8px 12px',
-        background: theme.headerBg,
-        cursor: 'pointer',
-        fontSize: '11px',
-        fontWeight: 600,
-        textTransform: 'uppercase',
-        color: theme.textSec,
-        userSelect: 'none',
-        transition: 'background 0.2s'
-    },
-    toolPanelList: {
-        display: 'flex',
-        flexDirection: 'column',
-        padding: '4px 0',
-        transition: 'height 0.3s ease'
-    },
-    columnItem: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        padding: '6px 12px',
-        fontSize: '12px',
-        cursor: 'default',
-        transition: 'background 0.2s, transform 0.2s',
-        position: 'relative',
-        userSelect: 'none'
-    }
-});
-
-const ContextMenu = ({ x, y, onClose, actions }) => {
-    const [adjustedPosition, setAdjustedPosition] = useState({ x, y });
-
-    useEffect(() => {
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
-        const menuWidth = 200;
-        const menuHeight = actions.length * 32 + 20;
-
-        let adjustedX = x;
-        let adjustedY = y;
-
-        if (x + menuWidth > viewportWidth) {
-            adjustedX = viewportWidth - menuWidth - 10;
-        }
-        if (y + menuHeight > viewportHeight) {
-            adjustedY = viewportHeight - menuHeight - 10;
-        }
-
-        setAdjustedPosition({ x: adjustedX, y: adjustedY });
-    }, [x, y, actions.length]);
-
-    return (
-        <div style={{
-            position: 'fixed',
-            top: adjustedPosition.y,
-            left: adjustedPosition.x,
-            background: '#fff',
-            border: '1px solid #ccc',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-            zIndex: 10001, // Above notifications
-            padding: '6px 0',
-            borderRadius: '6px',
-            fontSize: '13px',
-            minWidth: '180px',
-            maxWidth: '300px'
-        }}>
-            {actions.map((action, i) => {
-                if (action === 'separator') {
-                    return <div key={i} style={{height: '1px', background: '#e0e0e0', margin: '4px 0'}} />;
-                }
-                return (
-                    <div key={i} onClick={() => { action.onClick(); onClose(); }} style={{
-                        padding: '8px 16px', cursor: 'pointer', backgroundColor: '#fff', display: 'flex', alignItems: 'center', gap: '8px'
-                    }} onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f5f5f5'} onMouseLeave={e => e.currentTarget.style.backgroundColor = '#fff'}>
-                        {action.icon && <span style={{color: '#757575'}}>{action.icon}</span>}
-                        {action.label}
-                    </div>
-                );
-            })}
-        </div>
-    );
-};
-
-const StatusBar = ({ selectedCells, rowCount, visibleRowsCount, theme }) => {
-    const stats = useMemo(() => {
-        const values = Object.values(selectedCells).map(v => parseFloat(v)).filter(v => !isNaN(v));
-        const count = Object.keys(selectedCells).length;
-        if (values.length === 0) return { count };
-        
-        const sum = values.reduce((a, b) => a + b, 0);
-        const avg = sum / values.length;
-        const min = Math.min(...values);
-        const max = Math.max(...values);
-        
-        // Advanced stats
-        const sqDiffs = values.map(v => Math.pow(v - avg, 2));
-        const variance = sqDiffs.reduce((a, b) => a + b, 0) / values.length;
-        const stdDev = Math.sqrt(variance);
-        
-        return { count, sum, avg, min, max, variance, stdDev };
-    }, [selectedCells]);
-
-    return (
-        <div style={{ height: '32px', borderTop: `1px solid ${theme.border}`, background: theme.headerBg, display: 'flex', alignItems: 'center', padding: '0 16px', justifyContent: 'space-between', fontSize: '12px', color: theme.textSec }}>
-            <div>
-                {rowCount ? `Total: ${rowCount.toLocaleString()}` : 'Loading...'} 
-                {visibleRowsCount && ` | Visible: ${visibleRowsCount}`}
-            </div>
-            <div style={{display: 'flex', gap: '16px', overflowX: 'auto'}}>
-                <span>Count: {stats.count}</span>
-                {stats.sum !== undefined && (
-                    <>
-                        <span>Sum: {stats.sum.toLocaleString(undefined, {maximumFractionDigits: 2})}</span>
-                        <span>Avg: {stats.avg.toLocaleString(undefined, {maximumFractionDigits: 2})}</span>
-                        <span>Min: {stats.min.toLocaleString(undefined, {maximumFractionDigits: 2})}</span>
-                        <span>Max: {stats.max.toLocaleString(undefined, {maximumFractionDigits: 2})}</span>
-                        <span>Var: {stats.variance.toLocaleString(undefined, {maximumFractionDigits: 2})}</span>
-                        <span>StdDev: {stats.stdDev.toLocaleString(undefined, {maximumFractionDigits: 2})}</span>
-                    </>
-                )}
-            </div>
-        </div>
-    );
-};
-
-// --- Editable Cell Component ---
-const EditableCell = ({ 
-    getValue, 
-    row, 
-    column, 
-    format, 
-    validationRules,
-    setProps,
-    handleContextMenu
-}) => {
-    const initialValue = getValue();
-    const [value, setValue] = useState(initialValue);
-    const [isEditing, setIsEditing] = useState(false);
-    const [error, setError] = useState(null);
-    const inputRef = useRef(null);
-
-    useEffect(() => {
-        setValue(initialValue);
-    }, [initialValue]);
-
-    useEffect(() => {
-        if (isEditing && inputRef.current) {
-            inputRef.current.focus();
-            inputRef.current.select();
-        }
-    }, [isEditing]);
-
-    const validate = (val) => {
-        if (!validationRules || !validationRules[column.id]) return true;
-        const rules = validationRules[column.id];
-        for (const rule of rules) {
-            if (rule.type === 'required' && (val === null || val === '')) return false;
-            if (rule.type === 'numeric' && isNaN(Number(val))) return false;
-            if (rule.type === 'min' && Number(val) < rule.value) return false;
-            if (rule.type === 'max' && Number(val) > rule.value) return false;
-            if (rule.type === 'regex' && !new RegExp(rule.pattern).test(val)) return false;
-        }
-        return true;
-    };
-
-    const onBlur = () => {
-        setIsEditing(false);
-        setError(null);
-        
-        // Basic type conversion for numeric fields
-        let submitValue = value;
-        // Check if the column is generally numeric (based on format or current value)
-        const isNumeric = typeof initialValue === 'number' || (format && (format.startsWith('fixed') || format === 'currency' || format === 'percent'));
-        
-        if (isNumeric && value !== '') {
-             submitValue = Number(value);
-        }
-
-        if (String(submitValue) !== String(initialValue)) {
-            if (validate(submitValue)) {
-                 if (setProps) {
-                    setProps({
-                        cellUpdate: {
-                            rowId: row.id,
-                            colId: column.id,
-                            value: submitValue,
-                            oldValue: initialValue,
-                            timestamp: Date.now()
-                        }
-                    });
-                }
-            } else {
-                setError("Invalid value");
-                // Optional: keep editing or revert. For now, revert after short delay or keep visual error
-                console.warn("Validation failed for", submitValue);
-                setValue(initialValue); 
-            }
-        }
-    };
-
-    return isEditing ? (
-        <input 
-            ref={inputRef}
-            value={value} 
-            onChange={e => setValue(e.target.value)} 
-            onBlur={onBlur}
-            onKeyDown={e => {
-                if(e.key === 'Enter') {
-                    e.preventDefault();
-                    onBlur();
-                }
-                if(e.key === 'Escape') {
-                    setIsEditing(false);
-                    setValue(initialValue);
-                }
-                if(e.key === 'Tab') {
-                     // Tab handling is complex in React Table without custom logic, relying on default behavior for now (blur)
-                }
-            }}
-            style={{
-                width: '100%', 
-                height: '100%', 
-                border: error ? '2px solid red' : '2px solid #2196f3',
-                borderRadius: '0',
-                padding: '0 4px',
-                margin: 0,
-                outline: 'none',
-                fontFamily: 'inherit',
-                fontSize: 'inherit',
-                textAlign: 'right' 
-            }}
-        />
-    ) : (
-        <div 
-            onDoubleClick={() => setIsEditing(true)}
-            onContextMenu={e => handleContextMenu(e, initialValue, column.id, row)}
-            style={{
-                width: '100%', 
-                height: '100%', 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'flex-end', 
-                paddingRight: '8px',
-                cursor: 'cell',
-                border: error ? '1px solid red' : '1px solid transparent'
-            }}
-            title={error || undefined}
-        >
-            {formatValue(initialValue, format)}
-        </div>
-    );
-};
-
-// --- Column Tool Panel Tree Item ---
-const ColumnTreeItem = ({ column, level, theme, styles, handlePinColumn, colSearch, selectedCols, setSelectedCols, onDrop, sectionId }) => {
-    const [expanded, setExpanded] = useState(level < 1); // Only expand root level by default
-    const [isHovered, setIsHovered] = useState(false);
-    const [isDragging, setIsDragging] = useState(false);
-    
-    const isGroup = column.columns && column.columns.length > 0;
-    
-    const header = column.columnDef.header;
-    // Extract clean label, removing group prefix
-    let label = typeof header === 'string' ? header : column.id;
-    if (typeof label === 'string' && label.startsWith('group_')) {
-        label = column.id.replace('group_', '').split('|||').pop() || label;
-    }
-    // For React elements (like the collapse button), extract the headerVal
-    if (column.headerVal) {
-        label = column.headerVal;
-    }
-    
-    const pin = column.getIsPinned();
-    const isVisible = column.getIsVisible();
-    const isSelected = selectedCols.has(column.id);
-
-    if (colSearch && !label.toLowerCase().includes(colSearch.toLowerCase())) {
-        if (isGroup) {
-            const anyChildMatches = (col) => {
-                const childHeader = col.columnDef.header;
-                const childLabel = typeof childHeader === 'string' ? childHeader : col.id;
-                if (childLabel.toLowerCase().includes(colSearch.toLowerCase())) return true;
-                if (col.columns) return col.columns.some(anyChildMatches);
-                return false;
-            };
-            if (!anyChildMatches(column)) return null;
-        } else {
-            return null;
-        }
-    }
-
-    const toggleSelection = (e) => {
-        e.stopPropagation();
-        const newSet = new Set(selectedCols);
-        // User fix: When toggling a group selection, it now only selects the leaf columns (removed the parent group ID from the selection array).
-        const ids = isGroup ? getAllLeafIdsFromColumn(column) : [column.id];
-        
-        const allSelected = ids.every(id => newSet.has(id));
-        if (allSelected) {
-            ids.forEach(id => newSet.delete(id));
-        } else {
-            ids.forEach(id => newSet.add(id));
-        }
-        setSelectedCols(newSet);
-    };
-
-    const toggleVisibility = (e) => {
-        e.stopPropagation();
-        
-        if (isGroup) {
-            const leafCols = getAllLeafColumns(column);
-            const shouldShow = leafCols.some(c => !c.getIsVisible());
-            leafCols.forEach(c => c.toggleVisibility(shouldShow));
-        } else {
-            column.toggleVisibility();
-        }
-    };
-
-    const handlePin = (e, side) => {
-        e.stopPropagation();
-        handlePinColumn(column.id, side);
-    };
-
-    const onColDragStart = (e) => {
-        setIsDragging(true);
-        e.dataTransfer.setData('text/plain', column.id);
-        e.dataTransfer.effectAllowed = 'move';
-    };
-
-    const onColDragEnd = () => {
-        setIsDragging(false);
-    };
-
-    const handleItemDrop = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const droppedColId = e.dataTransfer.getData('text/plain');
-        if (droppedColId && onDrop && droppedColId !== column.id) {
-             onDrop(droppedColId, sectionId, column.id);
-        }
-    };
-
-    const handleKeyDown = (e) => {
-        if (e.key === 'Enter') {
-            toggleVisibility(e);
-        } else if (e.key === ' ') {
-            e.preventDefault();
-            toggleSelection(e);
-        } else if (e.altKey && e.key === 'ArrowLeft') {
-            e.preventDefault();
-            handlePinColumn(column.id, 'left');
-        } else if (e.altKey && e.key === 'ArrowRight') {
-            e.preventDefault();
-            handlePinColumn(column.id, 'right');
-        } else if (e.altKey && e.key === 'ArrowDown') {
-            e.preventDefault();
-            handlePinColumn(column.id, false);
-        }
-    };
-
-    const getPinBtnStyle = (active) => ({
-        padding: '4px', 
-        background: active ? theme.primary : 'transparent',
-        border: 'none', 
-        cursor: 'pointer', 
-        borderRadius: '4px', 
-        color: active ? '#fff' : theme.textSec,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        opacity: active ? 1 : 0.6,
-        transition: 'all 0.2s'
-    });
-
-    return (
-        <div 
-            style={{ display: 'flex', flexDirection: 'column', opacity: isDragging ? 0.5 : 1 }}
-            draggable={!isGroup}
-            onDragStart={onColDragStart}
-            onDragEnd={onColDragEnd}
-            onDragOver={e => e.preventDefault()}
-            onDrop={handleItemDrop}
-            role="treeitem"
-            aria-selected={isSelected}
-            aria-expanded={expanded}
-        >
-            <div 
-                style={{
-                    ...styles.columnItem,
-                    paddingLeft: `${level * 12 + 8}px`, // Reduced indentation step
-                    background: isSelected ? theme.select : (isHovered ? theme.hover : 'transparent'),
-                    borderLeft: pin ? `3px solid ${theme.primary}` : '3px solid transparent'
-                }} 
-                onMouseEnter={e => !isSelected && setIsHovered(true)} 
-                onMouseLeave={e => !isSelected && setIsHovered(false)}
-                tabIndex={0}
-                onKeyDown={handleKeyDown}
-            >
-                <input 
-                    type="checkbox" 
-                    checked={isSelected} 
-                    onChange={toggleSelection}
-                    onClick={(e) => { e.stopPropagation(); toggleSelection(e); }}
-                    style={{ margin: 0, cursor: 'pointer', pointerEvents: 'auto' }}
-                    tabIndex={-1} 
-                />
-
-                {!isGroup && (
-                    <span style={{ cursor: 'grab', display: 'flex', opacity: 0.7, marginRight: '4px' }}>
-                        <Icons.DragIndicator />
-                    </span>
-                )}
-                
-                {isGroup ? (
-                    <span onClick={() => setExpanded(!expanded)} style={{ cursor: 'pointer', display: 'flex', opacity: 0.7, marginRight: '4px' }}>
-                        {expanded ? <Icons.ChevronDown /> : <Icons.ChevronRight />}
-                    </span>
-                ) : <span style={{ width: '20px' }} />}
-                
-                <span 
-                    onClick={toggleVisibility}
-                    style={{ 
-                        cursor: 'pointer', 
-                        display: 'flex', 
-                        color: isVisible ? theme.primary : theme.textSec,
-                        opacity: isVisible ? 1 : 0.5,
-                        marginRight: '4px'
-                    }}
-                    title={isVisible ? "Hide Column" : "Show Column"}
-                >
-                    {isVisible ? <Icons.Visibility /> : <Icons.VisibilityOff />}
-                </span>
-                
-                <span 
-                    style={{ 
-                        flex: 1, 
-                        overflow: 'hidden', 
-                        textOverflow: 'ellipsis', 
-                        whiteSpace: 'nowrap',
-                        fontWeight: isGroup ? 600 : 400,
-                        cursor: isGroup ? 'pointer' : 'default',
-                        color: isVisible ? theme.text : theme.textSec,
-                        opacity: isVisible ? 1 : 0.6,
-                        display: 'flex', alignItems: 'center'
-                    }} 
-                    onClick={() => isGroup && setExpanded(!expanded)}
-                    title={label}
-                >
-                    {isGroup && <Icons.Group style={{ marginRight: '6px', fontSize: '14px', opacity: 0.8 }} />}
-                    {label}
-                </span>
-
-                {!isGroup && (
-                    <div className="pin-controls">
-                        <button onClick={(e) => handlePin(e, 'left')}>
-                            <Icons.PinLeft />
-                        </button>
-                        <button onClick={(e) => handlePin(e, false)}>
-                            <Icons.Unpin />
-                        </button>
-                        <button onClick={(e) => handlePin(e, 'right')}>
-                            <Icons.PinRight />
-                        </button>
-                    </div>
-                )}
-            </div>
-            {isGroup && expanded && (
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    {column.columns
-                        .filter(child => hasChildrenInZone(child, sectionId))
-                        .map(child => (
-                        <ColumnTreeItem 
-                            key={child.id} 
-                            column={child} 
-                            level={level + 1} 
-                            theme={theme} 
-                            styles={styles} 
-                            handlePinColumn={handlePinColumn}
-                            colSearch={colSearch}
-                            selectedCols={selectedCols}
-                            setSelectedCols={setSelectedCols}
-                            onDrop={onDrop}
-                            sectionId={sectionId}
-                        />
-                    ))}
-                </div>
-            )}
-        </div>
-    );
-};
-
-const SidebarFilterItem = ({ column, theme, styles, onFilter, currentFilter, options }) => {
-    const [expanded, setExpanded] = useState(false);
-    const hasFilter = currentFilter && (currentFilter.conditions || currentFilter.value);
-
-    return (
-        <div style={{display: 'flex', flexDirection: 'column'}}>
-            <div 
-                style={{
-                    ...styles.columnItem,
-                    cursor: 'pointer',
-                    background: expanded ? theme.select : 'transparent',
-                    borderLeft: hasFilter ? `3px solid ${theme.primary}` : '3px solid transparent'
-                }}
-                onClick={() => setExpanded(!expanded)}
-            >
-                <span style={{marginRight: '8px', opacity: 0.7, display: 'flex'}}>
-                    {expanded ? <Icons.ChevronDown/> : <Icons.ChevronRight/>}
-                </span>
-                <span style={{flex: 1, fontWeight: 500, display: 'flex', alignItems: 'center', gap: '6px'}}>
-                    {hasFilter && <Icons.Filter style={{fontSize: '12px', color: theme.primary}}/>}
-                    {typeof column.header === 'string' ? column.header : (column.columnDef && typeof column.columnDef.header === 'string' ? column.columnDef.header : column.id)}
-                </span>
-            </div>
-            {expanded && (
-                <div style={{padding: '8px', borderBottom: `1px solid ${theme.border}44`}}>
-                    <ColumnFilter
-                        column={column}
-                        onFilter={onFilter}
-                        currentFilter={currentFilter}
-                        options={options}
-                        theme={theme}
-                    />
-                </div>
-            )}
-        </div>
-    );
-};
-
-// --- Tool Panel Section Component ---
-const ToolPanelSection = ({ title, children, items, renderItem, theme, styles, initialExpanded = true, count, onDrop, sectionId }) => {
-    const [expanded, setExpanded] = useState(initialExpanded);
-    const [height, setHeight] = useState(initialExpanded ? 200 : 0);
-    const [isOver, setIsOver] = useState(false);
-    const contentRef = useRef(null);
-    const parentRef = useRef(null);
-
-    useEffect(() => {
-        if (expanded && contentRef.current) {
-            const contentHeight = contentRef.current.scrollHeight;
-            setHeight(Math.min(contentHeight, 300)); // Cap at 300px
-        } else {
-            setHeight(0);
-        }
-    }, [expanded, items, count]);
-
-    const rowVirtualizer = useVirtualizer({
-        count: items ? items.length : 0,
-        getScrollElement: () => contentRef.current,
-        estimateSize: () => 32,
-        overscan: 10,
-        enabled: !!items && expanded
-    });
-
-    const handleDragOver = (e) => {
-        e.preventDefault();
-        setIsOver(true);
-    };
-
-    const handleDragLeave = () => {
-        setIsOver(false);
-    };
-
-    const handleDrop = (e) => {
-        e.preventDefault();
-        setIsOver(false);
-        const columnId = e.dataTransfer.getData('text/plain');
-        if (onDrop && columnId) {
-            onDrop(columnId, sectionId);
-        }
-    };
-
-    return (
-        <div
-            style={{
-                ...styles.toolPanelSection,
-                flex: expanded ? '0 1 auto' : '0 0 auto',
-                minHeight: expanded ? '40px' : '32px',
-                overflow: 'hidden' // Prevent overlap
-            }}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-        >
-            <div style={styles.toolPanelSectionHeader} onClick={() => setExpanded(!expanded)}>
-                <span style={{ marginRight: '8px', opacity: 0.7, display: 'flex' }}>
-                    {expanded ? <Icons.ChevronDown /> : <Icons.ChevronRight />}
-                </span>
-                <span style={{ flex: 1 }}>{title}</span>
-                {count !== undefined && <span style={{ fontSize: '10px', opacity: 0.5, background: theme.hover, padding: '2px 6px', borderRadius: '10px' }}>{count}</span>}
-            </div>
-
-            <div
-                ref={contentRef}
-                style={{
-                    ...styles.toolPanelList,
-                    height: `${height}px`,
-                    overflowY: expanded ? 'auto' : 'hidden',
-                    transition: 'height 0.3s ease',
-                    opacity: expanded ? 1 : 0
-                }}
-            >
-                {items ? (
-                    <div style={{
-                        height: `${rowVirtualizer.getTotalSize()}px`,
-                        width: '100%',
-                        position: 'relative'
-                    }}>
-                        {rowVirtualizer.getVirtualItems().map(virtualRow => (
-                            <div
-                                key={virtualRow.index}
-                                style={{
-                                    position: 'absolute',
-                                    top: 0,
-                                    left: 0,
-                                    width: '100%',
-                                    height: `${virtualRow.size}px`,
-                                    transform: `translateY(${virtualRow.start}px)`
-                                }}
-                            >
-                                {renderItem(items[virtualRow.index], virtualRow.index)}
-                            </div>
-                        ))}
-                    </div>
-                ) : children}
-            </div>
-        </div>
-    );
-};
-
-const Notification = ({ message, type, onClose }) => (
-    <div style={{
-        position: 'fixed', // Changed from absolute
-        bottom: '20px',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        padding: '12px 20px',
-        borderRadius: '8px',
-        color: '#fff',
-        fontSize: '14px',
-        background: type === 'error' ? '#d32f2f' :
-                   type === 'warning' ? '#f57c00' : '#323232',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
-        zIndex: 10000, // High z-index
-        display: 'flex',
-        alignItems: 'center',
-        gap: '12px',
-        maxWidth: '400px',
-        minWidth: '200px',
-        pointerEvents: 'auto'
-    }}>
-        <span style={{flex: 1}}>{message}</span>
-        <span onClick={onClose} style={{
-            cursor:'pointer',
-            opacity: 0.7,
-            display: 'flex',
-            padding: '2px',
-            borderRadius: '4px',
-            background: 'rgba(255,255,255,0.1)'
-        }}><Icons.Close/></span>
-    </div>
-);
-
-const renderCount = { current: 0 };
+import { themes, getStyles, isDarkTheme } from '../utils/styles';
+import Icons from './Icons';
+import Notification from './Notification';
+import useStickyStyles from '../hooks/useStickyStyles';
+import { useServerSideRowModel } from '../hooks/useServerSideRowModel';
+import { useColumnVirtualizer } from '../hooks/useColumnVirtualizer';
+import SkeletonRow from './SkeletonRow';
+import { formatValue, getKey, getAllLeafIdsFromColumn, isGroupColumn, hasChildrenInZone } from '../utils/helpers';
+import FilterPopover from './Filters/FilterPopover';
+import SidebarFilterItem from './Sidebar/SidebarFilterItem';
+import ToolPanelSection from './Sidebar/ToolPanelSection';
+import ColumnTreeItem from './Sidebar/ColumnTreeItem';
+import ContextMenu from './Table/ContextMenu';
+import EditableCell from './Table/EditableCell';
+import StatusBar from './Table/StatusBar';
 
 export default function DashTanstackPivot(props) {
-    renderCount.current++;
-    console.log('[DEBUG] Render Entry', props.id, 'Count:', renderCount.current);
-    try {
     const { 
         id, 
         data = [], 
@@ -1470,8 +55,13 @@ export default function DashTanstackPivot(props) {
         sortOptions = {},
         columnVisibility: initialColumnVisibility = {},
         reset,
-        sortLock = false
+        sortLock = false,
+        availableFieldList,
+        dataOffset = 0,
+        dataVersion = 0
     } = props;
+
+
 
     // --- Persistence Helper ---
     const getStorage = () => {
@@ -1495,78 +85,44 @@ export default function DashTanstackPivot(props) {
 
         const [notification, setNotification] = useState(null);
 
-    
-
         useEffect(() => {
-
             if (notification) {
-
                 const timer = setTimeout(() => setNotification(null), 3000);
-
                 return () => clearTimeout(timer);
-
             }
-
         }, [notification]);
 
-        const [error, setError] = useState(null);
-
         const showNotification = React.useCallback((msg, type='info') => {
-
             setNotification({ message: msg, type });
-
         }, []);
-
-    
 
         // --- State ---
 
         const availableFields = useMemo(() => {
-
+            if (availableFieldList && availableFieldList.length > 0) return availableFieldList;
             if (serverSide && props.columns) return props.columns.map(c => c.id || c);
 
             return data && data.length ? Object.keys(data[0]) : [];
 
-        }, [data, props.columns, serverSide]);
-
-    
+        }, [data, props.columns, serverSide, availableFieldList]);
 
         // Theme State
-
         const [themeName, setThemeName] = useState('light');
-
         const theme = useMemo(() => themes[themeName], [themeName]);
-
         const styles = useMemo(() => getStyles(theme), [theme]);
 
-    
-
         const [rowFields, setRowFields] = useState(initialRowFields);
-
         const [colFields, setColFields] = useState(initialColFields);
-
         const [valConfigs, setValConfigs] = useState(initialValConfigs);
-
         const [filters, setFilters] = useState(initialFilters);
-
         const [sorting, setSorting] = useState(initialSorting);
-
         const [expanded, setExpanded] = useState(initialExpanded);
-
         const [columnPinning, setColumnPinning] = useState(() => loadPersistedPinning('columnPinning', initialColumnPinning));
-
         const [rowPinning, setRowPinning] = useState(() => loadPersistedPinning('rowPinning', initialRowPinning));
-
         const [layoutMode, setLayoutMode] = useState('hierarchy'); // hierarchy, tabular
-
-            // Visibility State
-            const [columnVisibility, setColumnVisibility] = useState(initialColumnVisibility);
-
-            // Accessibility
-            const [announcement, setAnnouncement] = useState("");
-
-            // Refs
-            const tableRef = useRef(null);
+        const [columnVisibility, setColumnVisibility] = useState(initialColumnVisibility);
+        const [announcement, setAnnouncement] = useState("");
+        const tableRef = useRef(null);
 
     // Reset Effect
     useEffect(() => {
@@ -1598,44 +154,24 @@ export default function DashTanstackPivot(props) {
         }
     }, [reset, initialRowFields, initialColFields, initialValConfigs, initialColumnPinning, initialRowPinning]);
 
-    
-
         // Save Persistence
-
         useEffect(() => {
-
             if (!persistence) return;
-
             const storage = getStorage();
-
             if (!storage) return;
-
             storage.setItem(`${id}-columnPinning`, JSON.stringify(columnPinning));
-
             storage.setItem(`${id}-rowPinning`, JSON.stringify(rowPinning));
-
         }, [id, columnPinning, rowPinning, persistence, persistence_type]);
 
-    
-
         useEffect(() => {
-
             const handleResize = () => {
-
                 if (window.innerWidth < 768 && columnPinning.right && columnPinning.right.length > 0) {
-
                      setColumnPinning(prev => ({ ...prev, right: [] }));
-
                      showNotification("Right pinned columns hidden due to screen size.", "warning");
-
                 }
-
             };
-
             window.addEventListener('resize', handleResize);
-
             return () => window.removeEventListener('resize', handleResize);
-
         }, [columnPinning.right, showNotification]);
 
     const [showRowTotals, setShowRowTotals] = useState(initialShowRowTotals);
@@ -1729,7 +265,7 @@ export default function DashTanstackPivot(props) {
 
         window.addEventListener('paste', handlePaste);
         return () => window.removeEventListener('paste', handlePaste);
-    }, [lastSelected]); // Fixed: Removed setProps from dependencies
+    }, [lastSelected]);
 
     // Validation helper
     const validateCell = (val, rule) => {
@@ -1738,34 +274,6 @@ export default function DashTanstackPivot(props) {
         if (rule.type === 'numeric') return !isNaN(parseFloat(val));
         if (rule.type === 'required') return val !== null && val !== '' && val !== undefined;
         return true;
-    };
-
-    const exportCSV = () => {
-        const rowsToExport = rows.map(r => {
-             const d = {};
-             columns.forEach(c => {
-                 const visit = col => {
-                     if (col.columns) col.columns.forEach(visit);
-                     else if (col.accessorKey) d[col.header] = r.getValue(col.accessorKey);
-                     else if (col.accessorFn) d[col.header] = col.accessorFn(r.original);
-                 };
-                 visit(c);
-             });
-             return d;
-        });
-        
-        if (rowsToExport.length === 0) return;
-        
-        const header = Object.keys(rowsToExport[0]).join(',');
-        const csv = rowsToExport.map(row => Object.values(row).map(v => `"${v}"`).join(',')).join('\n');
-        const blob = new Blob([header + '\n' + csv], { type: 'text/csv;charset=utf-8;' });
-        saveAs(blob, 'pivot_data.csv');
-    };
-
-    const exportJSON = () => {
-        const rowsToExport = rows.map(r => r.original);
-        const blob = new Blob([JSON.stringify(rowsToExport, null, 2)], { type: 'application/json' });
-        saveAs(blob, 'pivot_data.json');
     };
 
     const getConditionalStyle = (colId, value) => {
@@ -2147,29 +655,6 @@ export default function DashTanstackPivot(props) {
         return false;
     };
 
-    // 1. FIXED: Helper to check if column is a group
-    const isGroupColumn = (column) => {
-        return column.columns && column.columns.length > 0;
-    };
-
-    // 2. FIXED: Helper to get all leaf IDs from a column (recursive)
-    const getAllLeafIdsFromColumn = (column) => {
-        const leafIds = [];
-
-        const collectLeafIds = (col) => {
-            if (col.columns && col.columns.length > 0) {
-                // It's a group - recurse through children
-                col.columns.forEach(childCol => collectLeafIds(childCol));
-            } else {
-                // It's a leaf - add its ID
-                leafIds.push(col.id);
-            }
-        };
-
-        collectLeafIds(column);
-        return leafIds;
-    };
-
     const handlePinColumn = useCallback((columnId, side) => {
         const table = tableRef.current;
         if (!table) return;
@@ -2370,11 +855,11 @@ export default function DashTanstackPivot(props) {
         actions.push('separator');
         actions.push({
             label: 'Expand All Rows',
-            onClick: () => table.toggleAllRowsExpanded(true)
+            onClick: () => handleExpandAllRows(true)
         });
         actions.push({
             label: 'Collapse All Rows',
-            onClick: () => table.toggleAllRowsExpanded(false)
+            onClick: () => handleExpandAllRows(false)
         });
 
         actions.push('separator');
@@ -2403,19 +888,6 @@ export default function DashTanstackPivot(props) {
         const key = `${rowId}:${colId}`;
         const isSelected = selectedCells[key] !== undefined;
         
-        // Only select if not already selected (to allow multi-cell context actions)
-        /* 
-           User Request: Right click should NOT remove current selection.
-           We disable the auto-select on right click for unselected cells.
-           The context menu will still operate on the clicked value (passed as arg),
-           but 'Copy Selection' will refer to the existing selection.
-        */
-        /*
-        if (!isSelected && rowId) {
-             setSelectedCells({ [key]: value });
-        }
-        */
-
         const hasSelection = Object.keys(selectedCells).length > 0;
         
         const getTableData = (withHeaders) => {
@@ -2475,7 +947,7 @@ export default function DashTanstackPivot(props) {
                      currentRow = currentRow.getParentRow();
                  }
                  
-                 setProps({ 
+                 setProps({
                      drillThrough: { 
                          rowId, 
                          colId, 
@@ -2556,7 +1028,7 @@ export default function DashTanstackPivot(props) {
         });
     }, [data, filters, serverSide]);
 
-    const staticTotal = useMemo(() => ({ _isTotal: true }), []);
+    const staticTotal = useMemo(() => ({ _isTotal: true, _path: '__grand_total__', _id: 'Grand Total', __isGrandTotal__: true }), []);
     const staticMinMax = useMemo(() => ({}), []);
 
     const { nodes, total, minMax } = useMemo(() => {
@@ -2620,12 +1092,36 @@ export default function DashTanstackPivot(props) {
         // Enhanced Sorting Logic (Tree-aware + Natural + Customization)
         const customSortingFn = (rowA, rowB, columnId) => {
             try {
-                // 1. Tree Data Sorting: Keep Totals at bottom (or top if needed, defaulting to bottom here)
-                const aTotal = rowA.original._isTotal;
-                const bTotal = rowB.original._isTotal;
-                if (aTotal && !bTotal) return 1;
-                if (!aTotal && bTotal) return -1;
-                if (aTotal && bTotal) return 0;
+                // Safety check for loading rows (server-side)
+                if (!rowA.original || !rowB.original) return 0;
+
+                // 1. Special handling for grand total - it should always be at the end
+                // Check multiple ways to identify the grand total
+                const aIsGrandTotal = rowA.id === '__grand_total__' ||
+                                     rowA.original.__isGrandTotal__ ||
+                                     rowA.original._path === '__grand_total__' ||
+                                     rowA.original._id === 'Grand Total';
+                const bIsGrandTotal = rowB.id === '__grand_total__' ||
+                                     rowB.original.__isGrandTotal__ ||
+                                     rowB.original._path === '__grand_total__' ||
+                                     rowB.original._id === 'Grand Total';
+
+                // If one is grand total and the other is not, grand total goes last
+                if (aIsGrandTotal && !bIsGrandTotal) return 1;
+                if (!aIsGrandTotal && bIsGrandTotal) return -1;
+
+                // If both are grand totals, they are equal
+                if (aIsGrandTotal && bIsGrandTotal) return 0;
+
+                // 2. Regular totals (but not grand total) should come after non-totals
+                const aIsRegularTotal = (rowA.original && rowA.original._isTotal) && !aIsGrandTotal;
+                const bIsRegularTotal = (rowB.original && rowB.original._isTotal) && !bIsGrandTotal;
+
+                if (aIsRegularTotal && !bIsRegularTotal) return 1;
+                if (!aIsRegularTotal && bIsRegularTotal) return -1;
+
+                // Both are regular totals (not grand totals) - they can be equal for sorting purposes
+                if (aIsRegularTotal && bIsRegularTotal) return 0;
 
                 const valA = rowA.getValue(columnId);
                 const valB = rowB.getValue(columnId);
@@ -2686,7 +1182,7 @@ export default function DashTanstackPivot(props) {
                             }
                         }}
                     >
-                        {row.index + 1}
+                        {row.index + 1 + (serverSide ? (renderedOffset || 0) : 0)}
                     </div>
                 )
             });
@@ -2715,7 +1211,7 @@ export default function DashTanstackPivot(props) {
                                     // isSelected styling will be applied in renderCell
                                 }}
                             >
-                                 {row.getCanExpand() && !row.original._isTotal ? (
+                                 {row.getCanExpand() && !(row.original && row.original._isTotal) ? (
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
@@ -2728,7 +1224,7 @@ export default function DashTanstackPivot(props) {
                                         {row.getIsExpanded() ? <Icons.ChevronDown/> : <Icons.ChevronRight/>}
                                     </button>
                                 ) : <span style={{width:'18px'}}/>}
-                                <span style={{ fontWeight: row.original._isTotal ? 700 : 400 }}>{row.original._id}</span>
+                                <span style={{ fontWeight: (row.original && row.original._isTotal) ? 700 : 400 }}>{row.original ? row.original._id : ''}</span>
                             </div>
                         );
                     }
@@ -2760,7 +1256,7 @@ export default function DashTanstackPivot(props) {
                         }
 
                         // Expander only on the active level column
-                        const showExpander = (i === depth) && row.getCanExpand() && !row.original._isTotal;
+                        const showExpander = (i === depth) && row.getCanExpand() && !(row.original && row.original._isTotal);
 
                         return (
                             <div
@@ -2769,7 +1265,7 @@ export default function DashTanstackPivot(props) {
                                     alignItems: 'center',
                                     width: '100%',
                                     height: '100%',
-                                    fontWeight: row.original._isTotal ? 700 : 400
+                                    fontWeight: (row.original && row.original._isTotal) ? 700 : 400
                                     // isSelected styling will be applied in renderCell
                                 }}
                             >
@@ -2810,33 +1306,52 @@ export default function DashTanstackPivot(props) {
                 )
             }));
         } else if (serverSide) {
-            if (filteredData.length > 0) {
-                const keys = new Set();
+            const keys = new Set();
+            // Prioritize explicit columns from backend if available (prevents sparse data issues)
+            if (props.columns && props.columns.length > 0) {
+                props.columns.forEach(c => keys.add(c.id));
+            } else if (filteredData.length > 0) {
                 filteredData.forEach(row => Object.keys(row).forEach(k => keys.add(k)));
+            }
+
+            if (keys.size > 0) {
                 const ignoreKeys = new Set(['_id', 'depth', '_isTotal', '_path', 'uuid', ...rowFields, ...colFields]);
+                
+                // Helper to determine if a column is relevant for the grid
+                const measureSuffixes = valConfigs.map(v => `_${v.field}_${v.agg}`);
+                const measureIds = new Set(valConfigs.map(v => getKey('', v.field, v.agg)));
+                
                 const flatCols = [];
                 Array.from(keys).sort().forEach(k => {
-                    if (!ignoreKeys.has(k)) {
-                        flatCols.push({
-                            id: k,
-                            accessorFn: row => row[k],
-                            header: k,
-                            size: 130,
-                            sortingFn,
-                            cell: info => {
-                                const v = info.getValue();
-                                let fmt = null;
-                                if (valConfigs) {
-                                    for (const c of valConfigs) { if (k.includes(c.field)) { fmt = c.format; break; } }
-                                }
-                                return (
-                                    <div style={{width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'flex-end', paddingRight:'8px'}} onContextMenu={e => handleContextMenu(e, v, info.column.id, info.row)}>
-                                        {formatValue(v, fmt)}
-                                    </div>
-                                );
+                    if (ignoreKeys.has(k)) return;
+
+                    // Filter: Only show active measures, row totals, or pivoted measure columns
+                    let isRelevant = false;
+                    if (measureIds.has(k)) isRelevant = true;
+                    else if (k.startsWith('__RowTotal__')) isRelevant = true;
+                    else if (measureSuffixes.some(s => k.endsWith(s))) isRelevant = true;
+                    
+                    if (!isRelevant) return;
+
+                    flatCols.push({
+                        id: k,
+                        accessorFn: row => row[k],
+                        header: k,
+                        size: 130,
+                        sortingFn,
+                        cell: info => {
+                            const v = info.getValue();
+                            let fmt = null;
+                            if (valConfigs) {
+                                for (const c of valConfigs) { if (k.includes(c.field)) { fmt = c.format; break; } }
                             }
-                        });
-                    }
+                            return (
+                                <div style={{width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'flex-end', paddingRight:'8px'}} onContextMenu={e => handleContextMenu(e, v, info.column.id, info.row)}>
+                                    {formatValue(v, fmt)}
+                                </div>
+                            );
+                        }
+                    });
                 });
 
                 const rowTotalCols = flatCols.filter(c => c.id.startsWith('__RowTotal__'));
@@ -2977,45 +1492,232 @@ export default function DashTanstackPivot(props) {
         };
 
         return buildColumns([...hierarchyCols, ...dataCols]);
-    }, [filteredData, rowFields, colFields, valConfigs, minMax, colorScale, colExpanded, serverSide, layoutMode, showRowNumbers, isRowSelecting, rowDragStart]); // Removed selectedCells to prevent infinite re-renders
+    }, [filteredData, rowFields, colFields, valConfigs, minMax, colorScale, colExpanded, serverSide, layoutMode, showRowNumbers, isRowSelecting, rowDragStart, props.columns]); // Removed selectedCells to prevent infinite re-renders
+
+    const parentRef = useRef(null);
+    const rowHeight = rowHeights[spacingMode] || 32;
+
+    const serverSideCacheKey = useMemo(() => JSON.stringify({
+        sorting,
+        filters,
+        rowFields,
+        colFields,
+        valConfigs,
+        expanded,
+        rowCount
+    }), [sorting, filters, rowFields, colFields, valConfigs, expanded, rowCount]);
+
+    const serverSidePinsGrandTotal = serverSide && showColTotals;
+    const effectiveRowCount = serverSidePinsGrandTotal && rowCount ? Math.max(rowCount - 1, 0) : rowCount;
+
+    const { rowVirtualizer, getRow, renderedData, renderedOffset, clearCache, grandTotalRow } = useServerSideRowModel({
+        parentRef,
+        serverSide,
+        rowCount: effectiveRowCount,
+        rowHeight,
+        data: filteredData,
+        dataOffset: dataOffset || 0,
+        dataVersion: dataVersion || 0,
+        setProps,
+        blockSize: 100,
+        cacheKey: serverSideCacheKey,
+        excludeGrandTotal: serverSidePinsGrandTotal
+    });
 
     const tableData = useMemo(() => {
-        let baseData = serverSide ? filteredData : (filteredData.length ? [...nodes, total] : []);
-        if (serverSide && !showColTotals) {
+        if (serverSide) {
+             const centerData = renderedData.filter(row => (
+                 row &&
+                 !row._isTotal &&
+                 row._path !== '__grand_total__' &&
+                 row._id !== 'Grand Total'
+             ));
+             if (showColTotals && grandTotalRow) {
+                 return [...centerData, grandTotalRow];
+             }
+             return centerData;
+        }
+
+        let baseData = (filteredData.length ? [...nodes] : []);
+
+        if (!showColTotals) {
             baseData = baseData.filter(r => !r._isTotal);
         }
-        return baseData;
-    }, [nodes, total, filteredData, serverSide, showColTotals]);
 
-
-    const tableState = useMemo(() => ({
-        sorting,
-        expanded,
-        columnPinning,
-        rowPinning,
-        grouping: rowFields,
-        columnVisibility
-    }), [sorting, expanded, columnPinning, rowPinning, rowFields, columnVisibility]);
-
-    const handleSortingChange = useCallback((updater) => {
-        if (sortLock) {
-            showNotification('Sorting is locked.', 'warning');
-            return;
+        // Add the grand total to the end of the data array to ensure it appears at the bottom
+        // Only add if not in serverSide mode and showColTotals is true
+        if (!serverSide && showColTotals) {
+            baseData = [...baseData, total];
         }
-        setSorting(updater);
-    }, [sortLock, showNotification]);
 
-    const coreRowModelFn = useMemo(() => getCoreRowModel(), []);
-    const expandedRowModelFn = useMemo(() => getExpandedRowModel(), []);
-    const groupedRowModelFn = useMemo(() => getGroupedRowModel(), []);
-    const getRowId = useCallback((row, relativeIndex) => row._path || (row.id ? row.id : String(relativeIndex)), []);
-    const getSubRows = useCallback(r => r.subRows, []);
+        return baseData;
+    }, [nodes, total, filteredData, serverSide, showColTotals, renderedData, grandTotalRow]);
+
+    const getRowId = useCallback((row, relativeIndex) => {
+        if (!row) return `skeleton_${relativeIndex}`; // Handle skeleton rows
+        if (row._isTotal || row._path === '__grand_total__' || row._id === 'Grand Total') return '__grand_total__';
+        if (serverSide && typeof row.__virtualIndex === 'number') {
+            return row._path || (row.id ? row.id : String(row.__virtualIndex));
+        }
+        
+        // Use renderedOffset if available (from virtualizer cache), else fallback to dataOffset
+        const effectiveOffset = (serverSide && renderedOffset !== undefined) ? renderedOffset : (dataOffset || 0);
+        const actualIndex = serverSide ? relativeIndex + effectiveOffset : relativeIndex;
+        
+        return row._path || (row.id ? row.id : String(actualIndex));
+    }, [serverSide, dataOffset, renderedOffset]);
+    const getSubRows = useCallback(r => r ? r.subRows : undefined, []);
     const getRowCanExpand = useCallback(row => {
-        if (row.original._isTotal) return false;
-        if (serverSide) return row.original.depth < rowFields.length - 1;
+        if (!row.original) return false;
+        // Prevent expansion of any total rows, including grand totals
+        if (row.original && row.original._isTotal) return false;
+        
+        if (serverSide) {
+             // Use server-provided flag if available for accurate child detection
+             if (row.original._has_children !== undefined) return row.original._has_children;
+             return (row.original.depth || 0) < rowFields.length - 1;
+        }
+        
         return row.subRows && row.subRows.length > 0;
     }, [serverSide, rowFields.length]);
-    const getIsRowExpanded = useCallback(row => !row.original._isTotal && (expanded === true || !!expanded[row.id]), [expanded]);
+
+    const getIsRowExpanded = useCallback(row => {
+        if (!row.original) return false;
+        if (row.original && row.original._isTotal) return false;
+
+        if (serverSide) {
+             // 1. "Expand All" mode
+             if (expanded === true) return true;
+             
+             // 2. Explicit Local State (Optimistic)
+             // We check if the key exists in the expanded object to respect user interactions
+             if (expanded && Object.prototype.hasOwnProperty.call(expanded, row.id)) {
+                 return !!expanded[row.id];
+             }
+             
+             // 3. Server State (Fallback/Source of Truth)
+             // If local state doesn't know about this row yet (e.g. initial load), trust the server
+             if (row.original._is_expanded !== undefined) {
+                 return row.original._is_expanded;
+             }
+        }
+
+        // Standard Client-Side Logic
+        if (expanded === true) return true;
+        // Otherwise check if this specific row is expanded
+        return !!expanded[row.id];
+    }, [expanded, serverSide]);
+
+    const tableState = useMemo(() => {
+        // Automatically pin Grand Total to bottom if present in DATA
+        let finalRowPinning = rowPinning;
+        const grandTotalId = '__grand_total__';
+
+        // Find the actual Grand Total row in the data and get its real ID
+        let actualGrandTotalRowId = null;
+        if (tableData) {
+            for (const row of tableData) {
+                if (!row) continue;
+                if (row.__isGrandTotal__ || row._path === '__grand_total__' || row._id === 'Grand Total') {
+                    // We need to get the actual row ID that would be assigned by getRowId
+                    // Since we don't have the index here, we'll use the logic from getRowId
+                    if (row._isTotal || row._path === '__grand_total__' || row._id === 'Grand Total') {
+                        actualGrandTotalRowId = '__grand_total__';
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (actualGrandTotalRowId) {
+            const topWithoutGrandTotal = (rowPinning.top || []).filter(id => id !== actualGrandTotalRowId);
+            const bottomWithoutGrandTotal = (rowPinning.bottom || []).filter(id => id !== actualGrandTotalRowId);
+
+            finalRowPinning = {
+                ...rowPinning,
+                top: topWithoutGrandTotal,
+                bottom: [...bottomWithoutGrandTotal, actualGrandTotalRowId]
+            };
+        } else {
+            // If GT is NOT in data, ensure it is NOT pinned (to avoid crash)
+            if (rowPinning.bottom && rowPinning.bottom.includes(grandTotalId)) {
+                finalRowPinning = {
+                    ...rowPinning,
+                    bottom: rowPinning.bottom.filter(id => id !== grandTotalId)
+                };
+            }
+        }
+
+        return {
+            sorting,
+            expanded,
+            columnPinning,
+            rowPinning: finalRowPinning,
+            grouping: rowFields,
+            columnVisibility
+        };
+    }, [sorting, expanded, columnPinning, rowPinning, rowFields, columnVisibility, tableData]);
+
+
+
+    const handleExpandAllRows = (shouldExpand) => {
+        if (serverSide) {
+            setExpanded(shouldExpand ? true : {});
+            return;
+        }
+
+        if (shouldExpand) {
+            // Expand all rows by creating an object with all row IDs set to true
+            const allRows = table.getCoreRowModel().rows;
+            const newExpanded = {};
+
+            allRows.forEach(row => {
+                // Only add rows that can be expanded and are not totals
+                if (row.getCanExpand() && !(row.original && row.original._isTotal)) {
+                    newExpanded[row.id] = true;
+
+                    // Also expand sub-rows recursively
+                    const expandSubRows = (subRows) => {
+                        subRows.forEach(subRow => {
+                            if (subRow.getCanExpand() && !(subRow.original && subRow.original._isTotal)) {
+                                newExpanded[subRow.id] = true;
+                                if (subRow.subRows && subRow.subRows.length > 0) {
+                                    expandSubRows(subRow.subRows);
+                                }
+                            }
+                        });
+                    };
+
+                    if (row.subRows && row.subRows.length > 0) {
+                        expandSubRows(row.subRows);
+                    }
+                }
+            });
+
+            setExpanded(newExpanded);
+        } else {
+            // Collapse all by setting empty object
+            setExpanded({});
+        }
+    };
+
+    const handleSortingChange = (updater) => {
+        const newSorting = typeof updater === 'function' ? updater(sorting) : updater;
+        setSorting(newSorting);
+
+        // Fire sort event to backend
+        if (setPropsRef.current) {
+            setPropsRef.current({
+                sorting: newSorting,
+                sortEvent: {
+                    type: 'change',
+                    status: 'applied',
+                    sorting: newSorting,
+                    timestamp: Date.now()
+                }
+            });
+        }
+    };
 
     const table = useReactTable({
         data: tableData,
@@ -3027,9 +1729,9 @@ export default function DashTanstackPivot(props) {
         onRowPinningChange: (updater) => { console.log('[DEBUG] onRowPinningChange'); setRowPinning(updater); },
         onColumnVisibilityChange: (updater) => { console.log('[DEBUG] onColumnVisibilityChange'); setColumnVisibility(updater); },
         getRowId,
-        getCoreRowModel: coreRowModelFn,
-        getExpandedRowModel: expandedRowModelFn,
-        getGroupedRowModel: groupedRowModelFn,
+        getCoreRowModel: getCoreRowModel(),
+        getExpandedRowModel: getExpandedRowModel(),
+        getGroupedRowModel: getGroupedRowModel(),
         getSubRows,
         enableRowPinning: true, // Enable Row Pinning
         enableColumnResizing: true,
@@ -3110,192 +1812,93 @@ export default function DashTanstackPivot(props) {
         return Array.from(unique).sort();
     }, [activeFilterCol, filterOptions, table]);
 
-    const parentRef = useRef(null);
     const { rows } = table.getRowModel();
     const topRows = table.getTopRows();
     const bottomRows = table.getBottomRows();
     const centerRows = table.getCenterRows();
+    const lastStableRowModelRef = useRef({
+        topRows: [],
+        centerRows: [],
+        bottomRows: []
+    });
+    const hasRenderedData = renderedData.some(Boolean);
+
+    useEffect(() => {
+        if (!serverSide) return;
+        if (centerRows.length > 0 || topRows.length > 0 || bottomRows.length > 0) {
+            lastStableRowModelRef.current = { topRows, centerRows, bottomRows };
+        }
+    }, [serverSide, topRows, centerRows, bottomRows]);
+
+    useEffect(() => {
+        if (!serverSide) return;
+        lastStableRowModelRef.current = {
+            topRows: [],
+            centerRows: [],
+            bottomRows: []
+        };
+        if (parentRef.current) {
+            parentRef.current.scrollTop = 0;
+        }
+    }, [serverSide, serverSideCacheKey, parentRef]);
+
+    const effectiveTopRows = (serverSide && hasRenderedData && topRows.length === 0 && centerRows.length === 0)
+        ? lastStableRowModelRef.current.topRows
+        : topRows;
+    const effectiveCenterRows = (serverSide && hasRenderedData && centerRows.length === 0)
+        ? lastStableRowModelRef.current.centerRows
+        : centerRows;
+    const effectiveBottomRows = (serverSide && hasRenderedData && centerRows.length === 0 && bottomRows.length === 0)
+        ? lastStableRowModelRef.current.bottomRows
+        : bottomRows;
+    const rowModelLookup = useMemo(() => {
+        const lookup = new Map();
+        [...effectiveTopRows, ...effectiveCenterRows, ...effectiveBottomRows].forEach(row => {
+            if (row && row.id) {
+                lookup.set(row.id, row);
+            }
+        });
+        return lookup;
+    }, [effectiveTopRows, effectiveCenterRows, effectiveBottomRows]);
+
+    useEffect(() => {
+        if (!serverSide) return;
+        console.log('[pivot-client-table]', {
+            renderedOffset,
+            renderedDataLength: renderedData.length,
+            rowCount,
+            centerRows: centerRows.length,
+            topRows: topRows.length,
+            bottomRows: bottomRows.length,
+            effectiveCenterRows: effectiveCenterRows.length,
+            grandTotalPresent: !!grandTotalRow,
+            centerSample: effectiveCenterRows.slice(0, 5).map(row => ({
+                id: row.id,
+                path: row.original ? row.original._path : null,
+                isTotal: !!(row.original && row.original._isTotal)
+            }))
+        });
+    }, [serverSide, renderedOffset, renderedData, rowCount, centerRows, topRows, bottomRows, effectiveCenterRows, grandTotalRow]);
 
     const visibleLeafColumns = table.getVisibleLeafColumns();
-    const rowHeight = rowHeights[spacingMode];
-    
-    const rowVirtualizer = useVirtualizer({
-        count: serverSide ? (rowCount || 0) : centerRows.length, getScrollElement: () => parentRef.current, estimateSize: () => rowHeight, overscan: 20
-    });
+
+    // 1. Row Virtualizer (Managed by useServerSideRowModel)
     const virtualRows = rowVirtualizer.getVirtualItems();
 
-
-    // --- Optimized Horizontal Virtualization with Sticky Support ---
-    const leftCols = table.getLeftLeafColumns();
-    const rightCols = table.getRightLeafColumns();
-    const centerCols = table.getCenterLeafColumns();
-
-    const columnVirtualizer = useVirtualizer({
-        horizontal: true,
-        count: centerCols.length,
-        getScrollElement: () => parentRef.current,
-        estimateSize: (index) => centerCols[index].getSize(),
-        overscan: 5
+    // 2. Column Virtualizer (Extracted)
+    const {
+        columnVirtualizer,
+        virtualCenterCols,
+        beforeWidth,
+        afterWidth,
+        totalLayoutWidth,
+        leftCols,
+        rightCols,
+        centerCols
+    } = useColumnVirtualizer({
+        parentRef,
+        table
     });
-    const virtualCenterCols = columnVirtualizer.getVirtualItems();
-    const centerTotalWidth = columnVirtualizer.getTotalSize();
-    
-    // Calculate spacers for virtualized center
-    const [beforeWidth, afterWidth] = virtualCenterCols.length > 0 ? [
-        Math.max(0, virtualCenterCols[0].start),
-        Math.max(0, centerTotalWidth - virtualCenterCols[virtualCenterCols.length - 1].end)
-    ] : [0, 0];
-
-    // Add this useEffect instead for pinning validation
-    /*
-    useEffect(() => {
-        if (!visibleLeafColumns.length) return;
-
-        const allLeafIds = visibleLeafColumns.map(c => c.id);
-        const { left = [], right = [] } = columnPinning;
-
-        const validLeft = left.filter(id => allLeafIds.includes(id));
-        const validRight = right.filter(id => allLeafIds.includes(id));
-
-        // Check if we need to update
-        if (validLeft.length !== left.length || validRight.length !== right.length) {
-            console.log('[DEBUG] Pinning Validation Triggered Update', { left, right, validLeft, validRight, allLeafIds });
-            setColumnPinning({
-                left: validLeft,
-                right: validRight
-            });
-        }
-    }, [visibleLeafColumns, columnPinning.left, columnPinning.right]); // Only run when these change
-    */
-
-    // DEBUG HELPER: Removed logging to prevent console flooding
-    useEffect(() => {
-        /*
-        console.log('[PINNING STATE]', {
-            left: columnPinning.left,
-            right: columnPinning.right,
-            visibleLeafCount: visibleLeafColumns.length
-        });
-        */
-    }, [columnPinning.left, columnPinning.right, visibleLeafColumns.length]); 
-
-    // Helper function to check if theme is dark
-    const isDarkTheme = (theme) => theme.name === 'dark' || theme.text === '#fff';
-
-    // Border utility functions
-    const getBorderColor = (theme, opacity = 1.0) => {
-        const rgb = theme.border.startsWith('#')
-            ? theme.border
-            : '#e0e0e0'; // fallback
-        return `${rgb}${Math.floor(opacity * 255).toString(16).padStart(2, '0')}`;
-    };
-
-
-
-    // --- Add custom hook for sticky styles ---
-    const useStickyStyles = (visibleLeafColumns, columnPinning, theme, leftCols, rightCols) => {
-        return useMemo(() => {
-            const { left, right } = columnPinning;
-
-            const getHeaderStickyStyle = (header, level = 0, isLastPinnedLeft = false, isFirstPinnedRight = false, renderSection = 'center') => {
-                const isGroupHeader = header.column.columns && header.column.columns.length > 0;
-                
-                let shouldBeSticky = false;
-                let effectivePinDirection = null;
-                
-                if (isGroupHeader) {
-                    // Group headers become sticky when rendered in pinned sections
-                    if (renderSection === 'left') {
-                        shouldBeSticky = true;
-                        effectivePinDirection = 'left';
-                    } else if (renderSection === 'right') {
-                        shouldBeSticky = true;
-                        effectivePinDirection = 'right';
-                    }
-                } else {
-                    // Leaf column - use direct pinning
-                    const isPinned = header.column.getIsPinned();
-                    effectivePinDirection = isPinned;
-                    shouldBeSticky = !!isPinned;
-                }
-
-                if (!shouldBeSticky) return {};
-
-                // Z-index calculation
-                const baseZIndex = 500 - (level * 10);
-                const isLeaf = !isGroupHeader;
-                const zIndexBoost = isLeaf ? 2 : 1;
-
-                const style = {
-                    position: 'sticky',
-                    zIndex: baseZIndex + zIndexBoost,
-                    background: theme.headerBg,
-                    top: `${level * 40}px`,
-                };
-
-                // Calculate position
-                if (effectivePinDirection === 'left') {
-                    if (isGroupHeader) {
-                        // For group headers in left section, position at the start of leftmost pinned child
-                        const leafColumns = getAllLeafColumns(header.column);
-                        const pinnedLeaves = leafColumns.filter(col => col.getIsPinned() === 'left');
-                        const leftmostLeaf = pinnedLeaves[0];
-                        style.left = leftmostLeaf ? `${leftmostLeaf.getStart('left')}px` : '0px';
-                    } else {
-                        style.left = `${header.column.getStart('left')}px`;
-                    }
-                    if (isLastPinnedLeft) {
-                        style.borderRight = `1px solid ${theme.border}`;
-                        style.boxShadow = '2px 0 5px -2px rgba(0,0,0,0.2)';
-                        style.zIndex = style.zIndex + 1;
-                    }
-                } else if (effectivePinDirection === 'right') {
-                    if (isGroupHeader) {
-                        // For group headers in right section, position at the end of rightmost pinned child
-                        const leafColumns = getAllLeafColumns(header.column);
-                        const pinnedLeaves = leafColumns.filter(col => col.getIsPinned() === 'right');
-                        const rightmostLeaf = pinnedLeaves[pinnedLeaves.length - 1];
-                        style.right = rightmostLeaf ? `${rightmostLeaf.getAfter('right')}px` : '0px';
-                    } else {
-                        style.right = `${header.column.getAfter('right')}px`;
-                    }
-                    if (isFirstPinnedRight) {
-                        style.borderLeft = `1px solid ${theme.border}`;
-                        style.boxShadow = '-2px 0 5px -2px rgba(0,0,0,0.2)';
-                        style.zIndex = style.zIndex + 1;
-                    }
-                }
-
-                return style;
-            };
-
-            const getStickyStyle = (column, rowBackground) => {
-                const isPinned = column.getIsPinned();
-                const isLeft = isPinned === 'left';
-                const isRight = isPinned === 'right';
-
-                if (!isPinned) return {};
-
-                const style = {
-                    position: 'sticky',
-                    zIndex: column.id === 'hierarchy' ? 30 : 20,
-                    background: rowBackground,
-                };
-
-                if (isLeft) {
-                    style.left = `${column.getStart('left')}px`;
-                    style.borderRight = `1px solid ${theme.border}`;
-                } else if (isRight) {
-                    style.right = `${column.getAfter('right')}px`;
-                    style.borderLeft = `1px solid ${theme.border}`;
-                }
-                return style;
-            };
-
-            return { getHeaderStickyStyle, getStickyStyle };
-        }, [visibleLeafColumns, columnPinning, theme, leftCols, rightCols]);
-    };
-
 
     // Use the custom hook
     const { getHeaderStickyStyle, getStickyStyle } = useStickyStyles(
@@ -3305,82 +1908,6 @@ export default function DashTanstackPivot(props) {
         leftCols,
         rightCols
     );
-
-
-    // 8. QUICK TEST: Removed logging to prevent console flooding
-    useEffect(() => {
-        /*
-        console.log('[PINNED COLUMNS]', {
-            left: columnPinning.left,
-            right: columnPinning.right,
-            visibleCount: visibleLeafColumns.length
-        });
-        */
-    }, [columnPinning.left, columnPinning.right, visibleLeafColumns.length]); 
-
-    // Calculate total layout width for scroll container
-    const leftWidth = leftCols.reduce((acc, col) => acc + col.getSize(), 0);
-    const rightWidth = rightCols.reduce((acc, col) => acc + col.getSize(), 0);
-    const totalLayoutWidth = leftWidth + centerTotalWidth + rightWidth;
-
-    // --- Progressive Data Loading ---
-    const isInitializedRef = useRef(false);
-    const lastViewportRef = useRef(null);
-    const viewportDebounceRef = useRef(null);
-
-    useEffect(() => {
-        if (!serverSide || !setPropsRef.current) return;
-
-        // Wait for data to be loaded before virtualizing
-        if (!tableData || tableData.length === 0) {
-            return;
-        }
-
-        // Wait for virtualRows to stabilize
-        if (virtualRows.length === 0) {
-            return;
-        }
-
-        const start = virtualRows[0].index;
-        const end = virtualRows[virtualRows.length - 1].index;
-        const count = end - start + 1;
-
-        // Create viewport signature
-        const viewportKey = `${start}-${end}-${count}`;
-
-        // Skip if viewport hasn't changed
-        if (lastViewportRef.current === viewportKey) {
-            return;
-        }
-
-        // Debounce viewport updates to prevent rapid firing
-        if (viewportDebounceRef.current) {
-            clearTimeout(viewportDebounceRef.current);
-        }
-
-        viewportDebounceRef.current = setTimeout(() => {
-            // Only send viewport updates if we have valid data
-            if (count > 0 && start >= 0 && end >= start) {
-                lastViewportRef.current = viewportKey;
-
-                // Only send viewport in server-side mode, don't modify data
-                if (isInitializedRef.current) {
-                    setPropsRef.current({
-                        viewport: { start, end, count }
-                    });
-                } else {
-                    // First load - just mark as initialized, don't send viewport
-                    isInitializedRef.current = true;
-                }
-            }
-        }, 100); // 100ms debounce
-
-        return () => {
-            if (viewportDebounceRef.current) {
-                clearTimeout(viewportDebounceRef.current);
-            }
-        };
-    }, [virtualRows, serverSide, tableData]);
 
 
     const getFieldZone = (id) => {
@@ -3527,7 +2054,7 @@ export default function DashTanstackPivot(props) {
     };
 
     // --- Helper to Render a single Cell with useCallback ---
-            const renderCell = useCallback((cell, virtualRowIndex, isLastPinnedLeft = false, isFirstPinnedRight = false) => {
+            const renderCell = useCallback((cell, virtualRowIndex, isLastPinnedLeft = false, isFirstPinnedRight = false, isVirtualRow = false) => {
                 if (!cell) return null;
                 
                 const row = cell.row;
@@ -3546,7 +2073,7 @@ export default function DashTanstackPivot(props) {
                  }
             }
     
-            const rowBackground = row.original._isTotal ? '#e8f5e9' : (isDarkTheme(theme) ? '#212121' : '#fff');
+            const rowBackground = (row.original && row.original._isTotal) ? '#e8f5e9' : (isDarkTheme(theme) ? '#212121' : '#fff');
             let bg = rowBackground;
             if (isSelected) bg = theme.select;
     
@@ -3563,6 +2090,16 @@ export default function DashTanstackPivot(props) {
             }
     
             const condStyle = getConditionalStyle(cell.column.id, cell.getValue());
+            
+            // Fix row number ordering
+            let cellContent;
+            if (cell.column.id === '__row_number__' && isVirtualRow) {
+                cellContent = (row.original && typeof row.original.__virtualIndex === 'number')
+                    ? row.original.__virtualIndex + 1
+                    : virtualRowIndex + 1;
+            } else {
+                cellContent = flexRender(cell.column.columnDef.cell, cell.getContext());
+            }
     
             return (
                 <div 
@@ -3575,8 +2112,10 @@ export default function DashTanstackPivot(props) {
                         ...styles.cell,
                         width: col.getSize(),
                         height: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
                         justifyContent: isHierarchy ? 'flex-start' : 'flex-end',
-                        fontWeight: (row.original._isTotal || (isHierarchy && row.getIsGrouped())) ? 500 : 400,
+                        fontWeight: ((row.original && row.original._isTotal) || (isHierarchy && row.getIsGrouped())) ? 500 : 400,
                         background: bg,
                         ...stickyStyle,
                         ...condStyle,
@@ -3586,7 +2125,7 @@ export default function DashTanstackPivot(props) {
                     }}
                     onContextMenu={e => handleContextMenu(e, cell.getValue(), cell.column.id, row)}
                 >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    {cellContent}
                     {isLastSelected && Object.keys(selectedCells).length === 1 && isSelected && (
                         <div 
                             onMouseDown={handleFillMouseDown}
@@ -3614,6 +2153,14 @@ export default function DashTanstackPivot(props) {
         const sortIndex = header.column.getSortIndex();
         const isMultiSort = table.getState().sorting.length > 1;
         const isPinned = header.column.getIsPinned();
+        const leafColumns = header.column.getLeafColumns ? header.column.getLeafColumns() : [header.column];
+        const sectionLeafIds = new Set(
+            (renderSection === 'left' ? leftCols : renderSection === 'right' ? rightCols : centerCols).map(column => column.id)
+        );
+        const sectionWidth = leafColumns
+            .filter(column => sectionLeafIds.has(column.id))
+            .reduce((sum, column) => sum + column.getSize(), 0);
+        const headerWidth = sectionWidth || header.getSize();
 
         // Calculate sticky style for pinned headers using the hook
         const stickyStyle = getHeaderStickyStyle(header, level, isLastPinnedLeft, isFirstPinnedRight, renderSection);
@@ -3621,7 +2168,9 @@ export default function DashTanstackPivot(props) {
         return (
             <div key={header.id} style={{
                 ...styles.headerCell,
-                width: header.getSize(),
+                width: headerWidth,
+                minWidth: headerWidth,
+                flexShrink: 0,
                 height: rowHeight,
                 ...stickyStyle,
                 cursor: 'pointer',
@@ -3798,7 +2347,7 @@ export default function DashTanstackPivot(props) {
                 <div style={styles.sidebar} role="complementary" aria-label="Tool Panel">
                     <div style={{display: 'flex', borderBottom: `1px solid ${theme.border}`, marginBottom: '16px'}}>
                         <div 
-                            onClick={() => setSidebarTab('fields')} 
+                            onClick={() => setSidebarTab('fields')}
                             style={{
                                 padding: '8px 16px', cursor: 'pointer', 
                                 borderBottom: sidebarTab === 'fields' ? `2px solid ${theme.primary}` : 'none',
@@ -3807,7 +2356,7 @@ export default function DashTanstackPivot(props) {
                             }}
                         >Fields</div>
                         <div 
-                            onClick={() => setSidebarTab('filters')} 
+                            onClick={() => setSidebarTab('filters')}
                             style={{
                                 padding: '8px 16px', cursor: 'pointer', 
                                 borderBottom: sidebarTab === 'filters' ? `2px solid ${theme.primary}` : 'none',
@@ -3822,7 +2371,7 @@ export default function DashTanstackPivot(props) {
                             )}
                         </div>
                         <div 
-                            onClick={() => setSidebarTab('columns')} 
+                            onClick={() => setSidebarTab('columns')}
                             style={{
                                 padding: '8px 16px', cursor: 'pointer',
                                 borderBottom: sidebarTab === 'columns' ? `2px solid ${theme.primary}` : 'none',
@@ -3837,10 +2386,10 @@ export default function DashTanstackPivot(props) {
                             <div style={{marginBottom: '10px', display: 'flex', alignItems: 'center', background: theme.background, borderRadius: '6px', padding: '4px 8px', border: `1px solid ${theme.border}`}}>
                                 <Icons.Search />
                                 <input 
-                                    placeholder="Search columns..." 
+                                    placeholder="Search columns..."
                                     value={colSearch} 
                                     onChange={e => setColSearch(e.target.value)} 
-                                    style={{border:'none', background:'transparent', marginLeft:'10px', outline:'none', width:'100%', color: theme.text, fontSize: '13px'}} 
+                                    style={{border:'none', background:'transparent', marginLeft:'10px', outline:'none', width:'100%', color: theme.text, fontSize: '13px'}}
                                 />
                             </div>
                             {(() => {
@@ -3928,14 +2477,14 @@ export default function DashTanstackPivot(props) {
                                                                                                     }} style={{cursor:'pointer'}}><Icons.Close/></span>
                                                                                                 </div>
                                                                                                                                                 {zone.id === 'filter' && activeFilterCol === label && (
-                                                                                                                                                    <FilterPopover 
-                                                                                                                                                        column={{header: label, id: label}} 
-                                                                                                                                                        onClose={() => setActiveFilterCol(null)}
-                                                                                                                                                        onFilter={(filterValue) => handleHeaderFilter(label, filterValue)}
-                                                                                                                                                        currentFilter={filters[label]}
-                                                                                                                                                        options={filterOptions[label] || []}
-                                                                                                                                                        theme={theme}
-                                                                                                                                                    />
+                                                                                                                    <FilterPopover 
+                                                                                                                        column={{header: label, id: label}} 
+                                                                                                                        onClose={() => setActiveFilterCol(null)}
+                                                                                                                        onFilter={(filterValue) => handleHeaderFilter(label, filterValue)}
+                                                                                                                        currentFilter={filters[label]}
+                                                                                                                        options={filterOptions[label] || []}
+                                                                                                                        theme={theme}
+                                                                                                                    />
                                                                                                                                                 )}
                                                                                                                                     {dropLine && dropLine.zone===zone.id && dropLine.idx===idx+1 && <div style={{...styles.dropLine,bottom:-2}}/>}
                                                                                             </div>
@@ -3959,7 +2508,7 @@ export default function DashTanstackPivot(props) {
                                 <div style={{display: 'flex', alignItems: 'center', background: theme.background, borderRadius: '6px', padding: '8px 12px', border: `2px solid ${theme.border}`, transition: 'border-color 0.2s'}}>
                                     <Icons.Search />
                                     <input 
-                                        placeholder="Search columns..." 
+                                        placeholder="Search columns..."
                                         value={colSearch} 
                                         onChange={e => setColSearch(e.target.value)} 
                                         style={{
@@ -3994,11 +2543,10 @@ export default function DashTanstackPivot(props) {
                                 
                                 {/* Type Filter Pills */}
                                 <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap'}}>
-                                    {[
-                                        {value: 'all', label: 'All', icon: '📊'},
-                                        {value: 'number', label: 'Numbers', icon: '🔢'},
-                                        {value: 'string', label: 'Text', icon: '📝'},
-                                        {value: 'date', label: 'Dates', icon: '📅'}
+                                    {[{"value": "all", "label": "All", "icon": "📊"},
+                                        {"value": "number", "label": "Numbers", "icon": "🔢"},
+                                        {"value": "string", "label": "Text", "icon": "📝"},
+                                        {"value": "date", "label": "Dates", "icon": "📅"}
                                     ].map(type => (
                                         <button
                                             key={type.value}
@@ -4142,7 +2690,7 @@ export default function DashTanstackPivot(props) {
                                     </div>
                                     <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap'}}>
                                         <button 
-                                            onClick={() => { 
+                                            onClick={() => {
                                                 Array.from(selectedCols).forEach(id => handlePinColumn(id, 'left')); 
                                                 setSelectedCols(new Set()); 
                                             }} 
@@ -4164,7 +2712,7 @@ export default function DashTanstackPivot(props) {
                                             <span>Pin Left</span>
                                         </button>
                                         <button 
-                                            onClick={() => { 
+                                            onClick={() => {
                                                 Array.from(selectedCols).forEach(id => handlePinColumn(id, false)); 
                                                 setSelectedCols(new Set()); 
                                             }} 
@@ -4186,7 +2734,7 @@ export default function DashTanstackPivot(props) {
                                             <span>Unpin</span>
                                         </button>
                                         <button 
-                                            onClick={() => { 
+                                            onClick={() => {
                                                 Array.from(selectedCols).forEach(id => handlePinColumn(id, 'right')); 
                                                 setSelectedCols(new Set()); 
                                             }} 
@@ -4383,7 +2931,7 @@ export default function DashTanstackPivot(props) {
                         aria-rowcount={rows.length}
                         aria-colcount={visibleLeafColumns.length}
                     >
-                         <div style={{width: `${totalLayoutWidth}px`, minWidth:'100%', height: `${rowVirtualizer.getTotalSize() + (topRows.length + bottomRows.length) * rowHeight}px`, position: 'relative'}}>
+                         <div style={{width: `${totalLayoutWidth}px`, minWidth:'100%', height: `${rowVirtualizer.getTotalSize() + (effectiveTopRows.length + effectiveBottomRows.length) * rowHeight}px`, position: 'relative'}}>
                              {/* Sticky Header */}
                              <div style={{...styles.headerSticky, width: 'fit-content', display: 'flex'}} role="rowgroup">
                                  {/* Left Section */}
@@ -4475,9 +3023,9 @@ export default function DashTanstackPivot(props) {
                              </div>
 
                              {/* Top Pinned Rows */}
-                             {topRows.map((row, i) => {
+                            {effectiveTopRows.map((row, i) => {
                                  const isExpandedRow = row.getIsExpanded();
-                                 const isLastPinnedTop = i === topRows.length - 1;
+                                 const isLastPinnedTop = i === effectiveTopRows.length - 1;
                                  const headerHeight = (table.getHeaderGroups().length * rowHeight) + (showFloatingFilters ? rowHeight : 0);
                                  return (
                                      <div
@@ -4490,18 +3038,18 @@ export default function DashTanstackPivot(props) {
                                          position: 'sticky',
                                          top: headerHeight + (i * rowHeight),
                                          zIndex: 50, // Increased for top rows
-                                         background: row.original._isTotal ? '#e8f5e9' : theme.background,
+                                         background: (row.original && row.original._isTotal) ? '#e8f5e9' : theme.background,
                                          borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
                                          boxShadow: isLastPinnedTop ? `0 2px 4px -2px ${theme.border}80` : 'none'
                                      }}>
-                                         {row.getLeftVisibleCells().map((cell, idx) => renderCell(cell, i, idx === leftCols.length - 1, false))}
+                                         {row.getLeftVisibleCells().map((cell, idx) => renderCell(cell, i, idx === leftCols.length - 1, false, false))}
                                          <div style={{ width: beforeWidth, flexShrink: 0 }} />
                                          {virtualCenterCols.map(virtualCol => {
                                              const cell = row.getCenterVisibleCells()[virtualCol.index];
-                                             return renderCell(cell, i);
+                                             return renderCell(cell, i, false, false, false);
                                          })}
                                          <div style={{ width: afterWidth, flexShrink: 0 }} />
-                                         {row.getRightVisibleCells().map((cell, idx) => renderCell(cell, i, false, idx === 0))}
+                                         {row.getRightVisibleCells().map((cell, idx) => renderCell(cell, i, false, idx === 0, false))}
                                      </div>
                                  )
                              })}
@@ -4509,19 +3057,73 @@ export default function DashTanstackPivot(props) {
                              {/* Center Virtualized Rows */}
                              {virtualRows.map(virtualRow => {
                                  const headerHeight = (table.getHeaderGroups().length * rowHeight) + (showFloatingFilters ? rowHeight : 0);
-                                 const topOffset = headerHeight + (topRows.length * rowHeight);
+                                 const topOffset = headerHeight + (effectiveTopRows.length * rowHeight);
                                  
-                                 let row = centerRows[virtualRow.index];
+                                 let row;
+                                 
                                  if (serverSide) {
-                                     const viewportStart = lastViewportRef.current ? parseInt(lastViewportRef.current.split('-')[0], 10) : 0;
-                                     const localIndex = Math.max(0, virtualRow.index - viewportStart);
-                                     row = centerRows[localIndex];
+                                     // 1. Fetch Data Directly from Cache (Source of Truth)
+                                     const cachedData = getRow(virtualRow.index);
+                                     
+                                     if (!cachedData) {
+                                         // Data not loaded yet -> Skeleton
+                                         return (
+                                             <div
+                                                key={`skeleton_${virtualRow.index}`}
+                                                style={{
+                                                 ...styles.row,
+                                                 height: virtualRow.size,
+                                                 top: `${virtualRow.start + topOffset}px`,
+                                                 width: `${totalLayoutWidth}px`,
+                                                 position: 'absolute',
+                                                 background: theme.background,
+                                                 borderBottom: `1px solid ${theme.border}`,
+                                                 display: 'flex', alignItems: 'center'
+                                             }}>
+                                                 <SkeletonRow style={{width: '100%'}} rowHeight={rowHeight} />
+                                             </div>
+                                         );
+                                     }
+
+                                     if (
+                                         serverSidePinsGrandTotal &&
+                                         (cachedData._isTotal || cachedData._path === '__grand_total__' || cachedData._id === 'Grand Total')
+                                     ) {
+                                         return null;
+                                     }
+
+                                     // 2. Resolve Row Object via ID (Decoupled from Index)
+                                     // We reconstruct the ID exactly as getRowId does, but using the global index directly.
+                                     // Global Index = virtualRow.index
+                                     let rowId;
+                                     if (cachedData._isTotal || cachedData._path === '__grand_total__' || cachedData._id === 'Grand Total') {
+                                         rowId = '__grand_total__';
+                                     } else {
+                                         rowId = cachedData._path || (cachedData.id ? cachedData.id : String(virtualRow.index));
+                                     }
+                                     
+                                     row = rowModelLookup.get(rowId);
+
+                                     // 3. Synchronization Check
+                                     // If table hasn't updated yet, table.getRow might return old data or undefined.
+                                     // We verify the row's data matches our cache.
+                                     const cachedPath = cachedData._isTotal ? '__grand_total__' : (cachedData._path || rowId);
+                                     const rowPath = row && row.original
+                                         ? (row.original._isTotal ? '__grand_total__' : (row.original._path || row.id))
+                                         : null;
+                                     if (row && rowPath !== cachedPath) {
+                                         row = undefined; // Stale row object
+                                     }
+                                 } else {
+                                     // Client-side mode: simple index access
+                                     row = effectiveCenterRows[virtualRow.index];
                                  }
 
-                                 if (!row) {
+                                 // 4. Fallback: If row object is missing (even if we had cache), show skeleton
+                                 if (!row || !row.original) {
                                       return (
                                          <div
-                                            key={virtualRow.index}
+                                            key={`skeleton_wait_${virtualRow.index}`}
                                             style={{
                                              ...styles.row,
                                              height: virtualRow.size,
@@ -4530,11 +3132,16 @@ export default function DashTanstackPivot(props) {
                                              position: 'absolute',
                                              background: theme.background,
                                              borderBottom: `1px solid ${theme.border}`,
-                                             display: 'flex', alignItems: 'center', paddingLeft: '16px', color: theme.textSec
+                                             display: 'flex', alignItems: 'center'
                                          }}>
-                                             Loading...
+                                             <SkeletonRow style={{width: '100%'}} rowHeight={rowHeight} />
                                          </div>
                                      );
+                                 }
+
+                                 // 5. Feature: Hide Totals if requested (Server Side only workaround)
+                                 if (serverSide && !showColTotals && row.original._isTotal) {
+                                     return null; 
                                  }
 
                                  const isExpandedRow = row.getIsExpanded();
@@ -4549,24 +3156,31 @@ export default function DashTanstackPivot(props) {
                                          height: virtualRow.size,
                                          top: `${virtualRow.start + topOffset}px`,
                                          width: `${totalLayoutWidth}px`,
-                                         background: row.original._isTotal ? '#e8f5e9' : '#fff',
+                                         background: (row.original && row.original._isTotal) ? '#e8f5e9' : '#fff',
                                          borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
                                          transition: rowVirtualizer.isScrolling ? 'none' : 'top 0.2s ease-out, background-color 0.2s'
                                      }}>
-                                         {row.getLeftVisibleCells().map((cell, idx) => renderCell(cell, virtualRow.index, idx === leftCols.length - 1, false))}
+                                         {row.getLeftVisibleCells().map((cell, idx) => renderCell(cell, virtualRow.index, idx === leftCols.length - 1, false, true))}
                                          <div style={{ width: beforeWidth, flexShrink: 0 }} />
                                          {virtualCenterCols.map(virtualCol => {
                                              const cell = row.getCenterVisibleCells()[virtualCol.index];
-                                             return renderCell(cell, virtualRow.index);
+                                             return renderCell(cell, virtualRow.index, false, false, true);
                                          })}
                                          <div style={{ width: afterWidth, flexShrink: 0 }} />
-                                         {row.getRightVisibleCells().map((cell, idx) => renderCell(cell, virtualRow.index, false, idx === 0))}
+                                         {row.getRightVisibleCells().map((cell, idx) => renderCell(cell, virtualRow.index, false, idx === 0, true))}
                                      </div>
                                  )
                              })}
 
+                             {/* Spacer: pushes sticky bottom rows to their correct natural position in flow.
+                                  Virtual rows use position:absolute (out of flow), so without this spacer
+                                  the sticky bottom rows would sit at the top of the container and never
+                                  reach their sticky activation point. */}
+                             {effectiveBottomRows.length > 0 && (
+                                 <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, flexShrink: 0 }} />
+                             )}
                              {/* Bottom Pinned Rows */}
-                             {bottomRows.map((row, i) => {
+                            {effectiveBottomRows.map((row, i) => {
                                  const isExpandedRow = row.getIsExpanded();
                                  const isFirstPinnedBottom = i === 0;
                                  return (
@@ -4578,20 +3192,20 @@ export default function DashTanstackPivot(props) {
                                          height: rowHeight,
                                          width: `${totalLayoutWidth}px`,
                                          position: 'sticky',
-                                         bottom: ((bottomRows.length - 1 - i) * rowHeight),
+                                         bottom: ((effectiveBottomRows.length - 1 - i) * rowHeight),
                                          zIndex: 50, // Increased for bottom rows
-                                         background: row.original._isTotal ? '#e8f5e9' : theme.background,
+                                         background: (row.original && row.original._isTotal) ? '#e8f5e9' : theme.background,
                                          borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
                                          boxShadow: isFirstPinnedBottom ? `0 -2px 4px -2px ${theme.border}80` : 'none'
                                      }}>
-                                         {row.getLeftVisibleCells().map((cell, idx) => renderCell(cell, i, idx === leftCols.length - 1, false))}
+                                         {row.getLeftVisibleCells().map((cell, idx) => renderCell(cell, i, idx === leftCols.length - 1, false, false))}
                                          <div style={{ width: beforeWidth, flexShrink: 0 }} />
                                          {virtualCenterCols.map(virtualCol => {
                                              const cell = row.getCenterVisibleCells()[virtualCol.index];
-                                             return renderCell(cell, i);
+                                             return renderCell(cell, i, false, false, false);
                                          })}
                                          <div style={{ width: afterWidth, flexShrink: 0 }} />
-                                         {row.getRightVisibleCells().map((cell, idx) => renderCell(cell, i, false, idx === 0))}
+                                         {row.getRightVisibleCells().map((cell, idx) => renderCell(cell, i, false, idx === 0, false))}
                                      </div>
                                  )
                              })}
@@ -4604,12 +3218,6 @@ export default function DashTanstackPivot(props) {
             {notification && <Notification message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
         </div>
     );
-    } catch (e) {
-        console.error('[DEBUG] Render Crash', e);
-        return <div>Error in DashTanstackPivot: {e.message}</div>;
-    } finally {
-        console.log('[DEBUG] Render Exit');
-    }
 };
 
 DashTanstackPivot.propTypes = {
@@ -4667,5 +3275,8 @@ DashTanstackPivot.propTypes = {
         columnOptions: PropTypes.object
     }),
     sortLock: PropTypes.bool,
-    sortEvent: PropTypes.object
+    sortEvent: PropTypes.object,
+    availableFieldList: PropTypes.arrayOf(PropTypes.string),
+    dataOffset: PropTypes.number,
+    dataVersion: PropTypes.number
 };
