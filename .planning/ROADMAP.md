@@ -132,7 +132,11 @@ Plans:
   4. Removing a field from any zone updates the pivot immediately without a full page reload
   5. The Python callback receives the current field zone configuration as a Dash prop update
   6. Setting field zone props from Python pre-populates the sidebar zones on initial render
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Add Filters drop zone and min/max aggregation options to sidebar
+- [ ] 05-02-PLAN.md — Harden drag-drop with validation, duplicate prevention, empty state, and regression tests
 
 ### Phase 6: Drill-Through & Excel Export
 **Goal**: Users can investigate any aggregated cell by seeing its source rows in a modal, and can download the current pivot view as an Excel file
@@ -144,7 +148,11 @@ Plans:
   3. The drill-through modal paginates when the source row count exceeds one page
   4. The drill-through modal supports sorting any column and applying a basic text filter
   5. Clicking "Export to Excel" downloads a .xlsx file containing the current pivot view with multi-level headers, row hierarchy, grand totals, and subtotals
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Add Filters drop zone and min/max aggregation options to sidebar
+- [ ] 05-02-PLAN.md — Harden drag-drop with validation, duplicate prevention, empty state, and regression tests
 
 ### Phase 7: Code Quality Refactor
 **Goal**: The frontend codebase is maintainable — no file exceeds ~400 lines, crashes show error UI instead of blank screens, and shared logic is not duplicated
@@ -156,7 +164,11 @@ Plans:
   3. Filter logic exists in exactly one place (shared hook or utility); no duplicate implementations across components
   4. The duplicate `run_pivot_arrow()` method in controller.py is removed with no regression in existing tests
   5. Column name sanitization in the backend uses Ibis parameter binding, eliminating SQL injection risk
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Add Filters drop zone and min/max aggregation options to sidebar
+- [ ] 05-02-PLAN.md — Harden drag-drop with validation, duplicate prevention, empty state, and regression tests
 
 ### Phase 8: Packaging, Docs & CI/CD
 **Goal**: Any Python developer can `pip install dash-tanstack-pivot`, find clear documentation, and the project has automated testing and publishing
@@ -168,7 +180,11 @@ Plans:
   3. The README contains a working 10-line minimal example and all Python props are documented with types and defaults
   4. At least three example Dash apps (basic DataFrame, hierarchical, SQL-connected) exist and run without errors
   5. A GitHub Actions workflow runs Python tests and JS build on every push, and publishes to PyPI on version tag push
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Add Filters drop zone and min/max aggregation options to sidebar
+- [ ] 05-02-PLAN.md — Harden drag-drop with validation, duplicate prevention, empty state, and regression tests
 
 ## Progress
 
