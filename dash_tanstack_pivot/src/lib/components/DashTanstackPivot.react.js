@@ -43,6 +43,7 @@ export default function DashTanstackPivot(props) {
         expanded: initialExpanded = {},
         showRowTotals: initialShowRowTotals = true,
         showColTotals: initialShowColTotals = true,
+        grandTotalPosition = 'top',
         filterOptions = {},
         conditionalFormatting = [],
         validationRules = {},
@@ -1609,9 +1610,10 @@ export default function DashTanstackPivot(props) {
     }, [expanded, serverSide]);
 
     const tableState = useMemo(() => {
-        // Automatically pin Grand Total to bottom if present in DATA
+        // Automatically pin Grand Total to top or bottom based on grandTotalPosition prop
         let finalRowPinning = rowPinning;
         const grandTotalId = '__grand_total__';
+        const pinToBottom = grandTotalPosition === 'bottom';
 
         // Find the actual Grand Total row in the data and get its real ID
         let actualGrandTotalRowId = null;
@@ -1619,8 +1621,6 @@ export default function DashTanstackPivot(props) {
             for (const row of tableData) {
                 if (!row) continue;
                 if (row.__isGrandTotal__ || row._path === '__grand_total__' || row._id === 'Grand Total') {
-                    // We need to get the actual row ID that would be assigned by getRowId
-                    // Since we don't have the index here, we'll use the logic from getRowId
                     if (row._isTotal || row._path === '__grand_total__' || row._id === 'Grand Total') {
                         actualGrandTotalRowId = '__grand_total__';
                         break;
@@ -1635,16 +1635,18 @@ export default function DashTanstackPivot(props) {
 
             finalRowPinning = {
                 ...rowPinning,
-                top: topWithoutGrandTotal,
-                bottom: [...bottomWithoutGrandTotal, actualGrandTotalRowId]
+                top: pinToBottom ? topWithoutGrandTotal : [...topWithoutGrandTotal, actualGrandTotalRowId],
+                bottom: pinToBottom ? [...bottomWithoutGrandTotal, actualGrandTotalRowId] : bottomWithoutGrandTotal,
             };
         } else {
             // If GT is NOT in data, ensure it is NOT pinned (to avoid crash)
-            if (rowPinning.bottom && rowPinning.bottom.includes(grandTotalId)) {
-                finalRowPinning = {
-                    ...rowPinning,
-                    bottom: rowPinning.bottom.filter(id => id !== grandTotalId)
-                };
+            const cleanPinning = {
+                top: (rowPinning.top || []).filter(id => id !== grandTotalId),
+                bottom: (rowPinning.bottom || []).filter(id => id !== grandTotalId),
+            };
+            if (cleanPinning.top.length !== (rowPinning.top || []).length ||
+                cleanPinning.bottom.length !== (rowPinning.bottom || []).length) {
+                finalRowPinning = { ...rowPinning, ...cleanPinning };
             }
         }
 
@@ -1656,7 +1658,7 @@ export default function DashTanstackPivot(props) {
             grouping: rowFields,
             columnVisibility
         };
-    }, [sorting, expanded, columnPinning, rowPinning, rowFields, columnVisibility, tableData]);
+    }, [sorting, expanded, columnPinning, rowPinning, rowFields, columnVisibility, tableData, grandTotalPosition]);
 
 
 
@@ -3172,11 +3174,11 @@ export default function DashTanstackPivot(props) {
                                  )
                              })}
 
-                             {/* Spacer: pushes sticky bottom rows to their correct natural position in flow.
+                             {/* Spacer: only needed when grand total is pinned to bottom.
                                   Virtual rows use position:absolute (out of flow), so without this spacer
                                   the sticky bottom rows would sit at the top of the container and never
                                   reach their sticky activation point. */}
-                             {effectiveBottomRows.length > 0 && (
+                             {grandTotalPosition === 'bottom' && effectiveBottomRows.length > 0 && (
                                  <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, flexShrink: 0 }} />
                              )}
                              {/* Bottom Pinned Rows */}
@@ -3237,6 +3239,7 @@ DashTanstackPivot.propTypes = {
     
     showRowTotals: PropTypes.bool,
     showColTotals: PropTypes.bool,
+    grandTotalPosition: PropTypes.oneOf(['top', 'bottom']),
     filterOptions: PropTypes.object,
     viewport: PropTypes.object,
     cellUpdate: PropTypes.object,
