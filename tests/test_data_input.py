@@ -69,6 +69,9 @@ def test_connection_string():
     import tempfile, os
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
+    # Remove the empty placeholder file so DuckDB can create a fresh database at that path.
+    # NamedTemporaryFile creates the file immediately; DuckDB refuses to open a non-DuckDB file.
+    os.unlink(db_path)
     try:
         con2 = duckdb.connect(db_path)
         con2.execute("CREATE TABLE sales_data AS SELECT 'North' AS region, 100 AS sales")
