@@ -13,8 +13,8 @@
 - [x] **QUAL-02**: Test coverage report generated and baseline documented
 - [ ] **QUAL-03**: Duplicate method `run_pivot_arrow()` in controller.py removed
 - [ ] **QUAL-04**: Column name sanitization secured against SQL injection
-- [ ] **QUAL-05**: `tests/test_frontend_contract.py` collection executes no data-generation side effects (lazy fixture, no module-scope DuckDB init)
-- [ ] **QUAL-06**: `dash_presentation/app.py` `update_pivot_table` has exactly one `except Exception` block (dead block removed)
+- [x] **QUAL-05**: `tests/test_frontend_contract.py` collection executes no data-generation side effects (lazy fixture, no module-scope DuckDB init)
+- [x] **QUAL-06**: `dash_presentation/app.py` `update_pivot_table` has exactly one `except Exception` block (dead block removed)
 
 ### Bug Fixes — Data Correctness
 
@@ -27,7 +27,7 @@
 
 ### Bug Fixes — Debug & Grand Total
 
-- [ ] **BUG-14**: Grand total row appears exactly once in every response — never duplicated at top and bottom simultaneously
+- [x] **BUG-14**: Grand total row appears exactly once in every response — never duplicated at top and bottom simultaneously
 
 ### Bug Fixes — Virtual Scroll & UI
 
@@ -41,12 +41,12 @@
 
 ### Data Input API
 
-- [ ] **API-01**: Component accepts a pandas DataFrame as `data` prop
-- [ ] **API-02**: Component accepts a polars DataFrame as `data` prop
-- [ ] **API-03**: Component accepts an Ibis table expression as `data` prop
-- [ ] **API-04**: Component accepts a connection string + table name as `data` prop
-- [ ] **API-05**: Input type is auto-detected at runtime — same prop interface for all types
-- [ ] **API-06**: Meaningful error message shown when unsupported input type passed
+- [x] **API-01**: Component accepts a pandas DataFrame as `data` prop
+- [x] **API-02**: Component accepts a polars DataFrame as `data` prop
+- [x] **API-03**: Component accepts an Ibis table expression as `data` prop
+- [x] **API-04**: Component accepts a connection string + table name as `data` prop
+- [x] **API-05**: Input type is auto-detected at runtime — same prop interface for all types
+- [x] **API-06**: Meaningful error message shown when unsupported input type passed
 
 ### Field Zone UI
 
@@ -152,15 +152,15 @@
 | BUG-11 | Phase 3 - Virtual Scroll & UI Bugs | Complete |
 | BUG-12 | Phase 3 - Virtual Scroll & UI Bugs | Complete |
 | BUG-13 | Phase 3 - Virtual Scroll & UI Bugs | Complete |
-| BUG-14 | Phase 3.1 - Debug Instrumentation + Grand Total Fix | Pending |
-| QUAL-05 | Phase 3.2 - Test Harness Hardening | Pending |
-| QUAL-06 | Phase 3.2 - Test Harness Hardening | Pending |
-| API-01 | Phase 4 - Data Input API | Pending |
-| API-02 | Phase 4 - Data Input API | Pending |
-| API-03 | Phase 4 - Data Input API | Pending |
-| API-04 | Phase 4 - Data Input API | Pending |
-| API-05 | Phase 4 - Data Input API | Pending |
-| API-06 | Phase 4 - Data Input API | Pending |
+| BUG-14 | Phase 3.1 - Debug Instrumentation + Grand Total Fix | Complete |
+| QUAL-05 | Phase 3.2 - Test Harness Hardening | Complete |
+| QUAL-06 | Phase 3.2 - Test Harness Hardening | Complete |
+| API-01 | Phase 4 - Data Input API | Complete |
+| API-02 | Phase 4 - Data Input API | Complete |
+| API-03 | Phase 4 - Data Input API | Complete |
+| API-04 | Phase 4 - Data Input API | Complete |
+| API-05 | Phase 4 - Data Input API | Complete |
+| API-06 | Phase 4 - Data Input API | Complete |
 | FIELD-01 | Phase 5 - Field Zone UI | Pending |
 | FIELD-02 | Phase 5 - Field Zone UI | Pending |
 | FIELD-03 | Phase 5 - Field Zone UI | Pending |

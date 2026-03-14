@@ -2,13 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-13T22:25:54.713Z"
+status: planning
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-03-14T12:44:26.037Z"
+last_activity: 2026-03-14 - Phase 3.2 completed; app bootstrap is lazy and frontend contract tests are green
 progress:
-  total_phases: 5
-  completed_phases: 4
-  total_plans: 14
-  completed_plans: 14
+  total_phases: 10
+  completed_phases: 5
+  total_plans: 19
+  completed_plans: 17
+  percent: 50
 ---
 
 # Project State
@@ -25,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 Phase: 4 of 8 (Data Input API)
 Plan: 0 of TBD in current phase
 Status: Ready to plan
-Last activity: 2026-03-13 - Phase 3 completed; virtual-scroll, hierarchy, and visible UI regressions are green
+Last activity: 2026-03-14 - Phase 3.2 completed; app bootstrap is lazy and frontend contract tests are green
 
 Progress: [#####-----] 50%
 
@@ -63,6 +66,9 @@ Progress: [#####-----] 50%
 | Phase 03-virtual-scroll-ui-bugs P04 | 2 | 2 tasks | 2 files |
 | Phase 03.1-debug-instrumentation-grand-total-fix P01 | 8 | 2 tasks | 1 files |
 | Phase 03.1-debug-instrumentation-grand-total-fix P02 | 10 | 2 tasks | 2 files |
+| Phase 03.2-test-harness-hardening P01 | 9 | 2 tasks | 2 files |
+| Phase 03.2-test-harness-hardening P02 | 7 | 2 tasks | 1 files |
+| Phase 04-data-input-api P01 | 3 | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -100,6 +106,12 @@ Recent decisions affecting current work:
 - [Phase 03.1-debug-instrumentation-grand-total-fix]: grand_total_emitted boolean flag replaces seen_grand_totals set in traverse() — generalizes via pivot_spec.rows[0]
 - [Phase 03.1-debug-instrumentation-grand-total-fix]: _dedup_grand_total unconditional post-processing applied before all returns in handle_virtual_scroll_request
 
+ - [Phase 03.2-test-harness-hardening]: dash_presentation.app now uses lazy `get_adapter()` bootstrap so test collection does not generate the 2M-row simulation dataset
+ - [Phase 03.2-test-harness-hardening]: app import smoke coverage moved inside `test_dash_app_import_and_layout_valid()` to avoid module-scope side effects
+ - [Phase 03.2-test-harness-hardening]: `update_pivot_table` keeps a single terminal main-path `except Exception`; inner drill-through and update handlers remain intact
+- [Phase 04-data-input-api]: Tests import from pivot_engine.pivot_engine.data_input — RED state is ModuleNotFoundError (expected)
+- [Phase 04-data-input-api]: test_connection_string uses a real temp DuckDB file so connection_string URI resolves correctly
+
 ### Pending Todos
 
 None yet.
@@ -110,6 +122,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-13T22:21:59.661Z
-Stopped at: Completed 03.1-02-PLAN.md
+Last session: 2026-03-14T12:44:26.034Z
+Stopped at: Completed 04-01-PLAN.md
 Resume file: None
