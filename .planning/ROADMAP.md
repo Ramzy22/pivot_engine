@@ -15,7 +15,7 @@ This is a brownfield project with a substantial existing codebase (~65 test file
 - [x] **Phase 3: Virtual Scroll & UI Bugs** - Fix scroll sync, column header alignment, row group expansion, context menu (completed 2026-03-13)
 - [x] **Phase 3.1: Debug Instrumentation + Grand Total Fix** [INSERTED] - Add request/response debug logging to adapter, diagnose and fix duplicate grand total row, add regression (completed 2026-03-13)
 - [x] **Phase 3.2: Test Harness Hardening** [INSERTED] - Fix unguarded app import in test_frontend_contract.py, remove dead except block in app.py (completed 2026-03-14)
-- [ ] **Phase 4: Data Input API** - Unify data prop to accept DataFrame, polars, Ibis, or connection string with auto-detection
+- [x] **Phase 4: Data Input API** - Unify data prop to accept DataFrame, polars, Ibis, or connection string with auto-detection (completed 2026-03-14)
 - [ ] **Phase 5: Field Zone UI** - Complete drag-and-drop sidebar with four zones, aggregation selector, bidirectional Dash props
 - [ ] **Phase 6: Drill-Through & Excel Export** - Cell drill-through modal with source rows, Excel .xlsx download of current view
 - [ ] **Phase 7: Code Quality Refactor** - Split 1500-line component, add error boundaries, fix stale closures and filter duplication
@@ -182,7 +182,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 → 3.2 → 4 → 5 → 6
 | 3. Virtual Scroll & UI Bugs | 4/4 | Complete | 2026-03-13 |
 | 3.1. Debug Instrumentation + Grand Total Fix | 0/2 | Complete    | 2026-03-13 |
 | 3.2. Test Harness Hardening | 2/2 | Complete | 2026-03-14 |
-| 4. Data Input API | 2/3 | In Progress|  |
+| 4. Data Input API | 2/3 | Complete    | 2026-03-14 |
 | 5. Field Zone UI | 0/TBD | Not started | - |
 | 6. Drill-Through & Excel Export | 0/TBD | Not started | - |
 | 7. Code Quality Refactor | 0/TBD | Not started | - |
