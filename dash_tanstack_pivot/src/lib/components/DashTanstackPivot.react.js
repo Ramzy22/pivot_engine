@@ -2011,12 +2011,13 @@ export default function DashTanstackPivot(props) {
         const targetIdx = (dropLine && dropLine.idx) || 0;
         const insertItem = (list, idx, item) => { const n = [...list]; n.splice(idx, 0, item); return n; };
         const fieldName = typeof field === 'string' ? field : field.field;
+        if (!fieldName || typeof fieldName !== 'string') { setDragItem(null); setDropLine(null); return; }
         if (srcZone !== targetZone) {
             if (srcZone==='rows') setRowFields(p=>p.filter(f=>f!==fieldName));
             if (srcZone==='cols') setColFields(p=>p.filter(f=>f!==fieldName));
             if (srcZone==='vals') setValConfigs(p=>p.filter((_,i)=>i!==srcIdx));
-            if (targetZone==='rows') setRowFields(p=>insertItem(p, targetIdx, fieldName));
-            if (targetZone==='cols') setColFields(p=>insertItem(p, targetIdx, fieldName));
+            if (targetZone==='rows') setRowFields(p=>p.includes(fieldName) ? p : insertItem(p, targetIdx, fieldName));
+            if (targetZone==='cols') setColFields(p=>p.includes(fieldName) ? p : insertItem(p, targetIdx, fieldName));
             if (targetZone==='vals') setValConfigs(p=>insertItem(p, targetIdx, {field: fieldName, agg:'sum'}));
             if (targetZone==='filter' && !filters.hasOwnProperty(fieldName)) setFilters(p=>({...p, [fieldName]: ''}));
         } else {
@@ -2464,8 +2465,8 @@ export default function DashTanstackPivot(props) {
                                                                                                                 alignItems:'center',
                                                                                                                 padding: '2px',
                                                                                                                 borderRadius: '4px',
-                                                                                                                background: filters[label] ? theme.select : 'transparent',
-                                                                                                                color: filters[label] ? theme.primary : 'inherit'
+                                                                                                                background: (filters[label] && (filters[label].conditions?.length > 0 || (typeof filters[label] === 'string' && filters[label].length > 0))) ? theme.select : 'transparent',
+                                                                                                                color: (filters[label] && (filters[label].conditions?.length > 0 || (typeof filters[label] === 'string' && filters[label].length > 0))) ? theme.primary : 'inherit'
                                                                                                             }}
                                                                                                         >
                                                                                                             <Icons.Filter />
@@ -2498,6 +2499,9 @@ export default function DashTanstackPivot(props) {
                                                                                                                         </div>
                                             )
                                         })}
+                                        {(zone.id==='filter' ? Object.keys(filters).filter(k=>k!=='global') : zone.id==='rows'?rowFields:zone.id==='cols'?colFields:valConfigs).length === 0 && (
+                                            <div style={{opacity:0.5, fontSize:'11px', padding:'8px', textAlign:'center', pointerEvents:'none'}}>Drag fields here</div>
+                                        )}
                                         <div style={{height:20}} onDragOver={e=>onDragOver(e,zone.id,(zone.id==='rows'?rowFields:zone.id==='cols'?colFields:zone.id==='vals'?valConfigs:Object.keys(filters).filter(k=>k!=='global')).length)} />
                                     </div>
                                 </div>
