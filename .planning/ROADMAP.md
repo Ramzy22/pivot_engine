@@ -211,7 +211,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 → 3.2 → 4 → 5 → 6
 | 3.2. Test Harness Hardening | 2/2 | Complete | 2026-03-14 |
 | 4. Data Input API | 3/3 | Complete | 2026-03-14 |
 | 5. Field Zone UI | 4/4 | Complete | 2026-03-15 |
-| 6. Drill-Through & Excel Export | 1/4 | In Progress|  |
+| 6. Drill-Through & Excel Export | 3/4 | In Progress|  |
 | 7. Column Display & UI States | 0/TBD | Not started | - |
 | 8. Code Quality Refactor | 0/TBD | Not started | - |
 | 9. Packaging, Docs & CI/CD | 0/TBD | Not started | - |
