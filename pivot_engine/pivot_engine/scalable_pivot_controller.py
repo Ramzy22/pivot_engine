@@ -5,6 +5,7 @@ from typing import Optional, Any, Dict, List, Union, Callable, Generator
 import threading
 import time
 import decimal
+import re
 import pyarrow as pa
 import asyncio
 import ibis
@@ -874,72 +875,49 @@ class ScalablePivotController(PivotController):
     async def update_record(self, table_name: str, key_columns: Dict[str, Any], updates: Dict[str, Any]) -> bool:
         """
         Update records in the database based on composite keys.
+        Uses parameterized ? binding for all values to prevent SQL injection.
         """
-        # Basic sanitization
         if not table_name.isidentifier():
-             raise ValueError("Invalid table name")
+            raise ValueError("Invalid table name")
 
-        # Build SET clause
-        set_clauses = []
+        set_parts = []
+        where_parts = []
+        params = []
+
         for col, val in updates.items():
-             if not col.isidentifier(): continue
-             val_str = str(val)
-             if isinstance(val, str):
-                 escaped_val = val.replace("'", "''")
-                 val_str = f"'{escaped_val}'"
-             elif val is None:
-                 val_str = "NULL"
-             set_clauses.append(f"{col} = {val_str}")
-        
-        # Build WHERE clause
-        where_clauses = []
+            if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', col):
+                continue
+            set_parts.append(f"{col} = ?")
+            params.append(val)
+
         for col, val in key_columns.items():
-             if not col.isidentifier(): continue
-             val_str = str(val)
-             if isinstance(val, str):
-                 escaped_val = val.replace("'", "''")
-                 val_str = f"'{escaped_val}'"
-             elif val is None:
-                 val_str = "IS NULL"
-             else:
-                 val_str = f"= {val_str}"
-                 
-             if val is None:
-                 where_clauses.append(f"{col} {val_str}")
-             else:
-                 where_clauses.append(f"{col} = {val_str.lstrip('= ')}")
+            if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', col):
+                continue
+            if val is None:
+                where_parts.append(f"{col} IS NULL")
+            else:
+                where_parts.append(f"{col} = ?")
+                params.append(val)
 
-        if not set_clauses or not where_clauses:
-             return False
+        if not set_parts or not where_parts:
+            return False
 
-        sql = f"UPDATE {table_name} SET {', '.join(set_clauses)} WHERE {' AND '.join(where_clauses)}"
-        
-        print(f"Executing Update: {sql}")
-        
+        sql = f"UPDATE {table_name} SET {', '.join(set_parts)} WHERE {' AND '.join(where_parts)}"
+
         loop = asyncio.get_running_loop()
         con = self.planner.con
-        
+
         def execute_update():
             if hasattr(con, 'raw_sql'):
-                con.raw_sql(sql)
+                con.raw_sql(sql, [*params])
             elif hasattr(con, 'execute'):
-                con.execute(sql)
-            elif hasattr(con, 'con'): 
-                con.con.execute(sql)
+                con.execute(sql, [*params])
+            elif hasattr(con, 'con'):
+                con.con.execute(sql, [*params])
             else:
-                raise NotImplementedError("Backend does not support raw SQL updates")
+                raise NotImplementedError("Backend does not support parameterized SQL updates")
 
         await loop.run_in_executor(None, execute_update)
-        
-        # Invalidate cache
-        self.cache.clear()
-        
-        # Push change event if CDC is enabled
-        if self.cdc_manager:
-            # We don't have the old row easily, but we can push a generic update notification
-            # or try to fetch it first (expensive)
-            pass
-            
         return True
 
     async def update_cell(self, table_name: str, row_id: Any, column: str, value: Any, id_column: str = "uuid"):
@@ -952,45 +930,26 @@ class ScalablePivotController(PivotController):
         # We'll try to use the backend's raw SQL execution if available.
         
         con = self.planner.con
-        
-        # Basic sanitization
-        if not table_name.isidentifier() or not column.isidentifier() or not id_column.isidentifier():
-             raise ValueError("Invalid identifier in update request")
-             
-        # DuckDB / Postgres / SQL style update
-        # We need to quote string values
-        val_str = str(value)
-        if isinstance(value, str):
-            escaped_value = value.replace("'", "''")
-            val_str = f"'{escaped_value}'" # Escape single quotes
-        elif value is None:
-            val_str = "NULL"
-            
-        row_id_str = str(row_id)
-        if isinstance(row_id, str):
-            escaped_row_id = row_id.replace("'", "''")
-            row_id_str = f"'{escaped_row_id}'"
 
-        sql = f"UPDATE {table_name} SET {column} = {val_str} WHERE {id_column} = {row_id_str}"
-        
-        print(f"Executing Update: {sql}")
-        
+        # Basic sanitization — only identifiers, never values, go into the SQL template
+        if not table_name.isidentifier() or not column.isidentifier() or not id_column.isidentifier():
+            raise ValueError("Invalid identifier in update request")
+
+        # Value params — use ? binding (NOT string interpolation)
+        sql = f"UPDATE {table_name} SET {column} = ? WHERE {id_column} = ?"
+
         loop = asyncio.get_running_loop()
-        
+
         def execute_update():
             if hasattr(con, 'raw_sql'):
-                con.raw_sql(sql)
+                con.raw_sql(sql, [value, row_id])
             elif hasattr(con, 'execute'):
-                # SQLAlchemy or similar
-                con.execute(sql)
-            elif hasattr(con, 'con'): # DuckDB connection wrapper sometimes
-                con.con.execute(sql)
+                con.execute(sql, [value, row_id])
+            elif hasattr(con, 'con'):
+                con.con.execute(sql, [value, row_id])
             else:
-                raise NotImplementedError("Backend does not support raw SQL updates")
-                
+                raise NotImplementedError("Backend does not support parameterized SQL updates")
+
         await loop.run_in_executor(None, execute_update)
-        
-        # Invalidate cache if needed
         self.cache.clear()
-        
         return {"status": "success", "updated": 1}

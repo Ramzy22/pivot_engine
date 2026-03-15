@@ -654,23 +654,6 @@ class PivotController:
         if hasattr(self, 'backend') and hasattr(self.backend, 'close'):
             self.backend.close()
 
-    def run_pivot_arrow(
-        self,
-        spec: Any,
-    ) -> pa.Table:
-        """
-        Execute a pivot query and return the result as a PyArrow Table.
-        This method is used by the Flight server for Arrow-native operations.
-        """
-        # Execute the pivot query and return the raw Arrow table
-        result = self.run_pivot(spec, return_format="arrow")
-        if isinstance(result, pa.Table):
-            return result
-        else:
-            # If for some reason it's not an Arrow table, convert it
-            # This would typically be the case if some error handling returns different format
-            raise ValueError(f"Expected PyArrow Table but got {type(result)}")
-
     async def run_hierarchical_pivot_batch_load(
         self,
         spec: Dict[str, Any],
