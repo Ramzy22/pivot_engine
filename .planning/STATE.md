@@ -2,13 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-15T18:38:39.313Z"
+current_phase: 07-column-display-ui-states
+current_plan: 3
+status: executing
+stopped_at: Completed 07-column-display-ui-states-02-PLAN.md
+last_updated: "2026-03-15T18:41:36.961Z"
+last_activity: 2026-03-15
 progress:
-  total_phases: 9
+  total_phases: 11
   completed_phases: 8
   total_plans: 30
-  completed_plans: 28
+  completed_plans: 29
 ---
 
 ﻿---
@@ -39,7 +43,7 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 ## Current Position
 
 Current Phase: 07-column-display-ui-states
-Current Plan: 2
+Current Plan: 3
 Total Plans in Phase: 3
 Status: Ready for execution
 Last Activity: 2026-03-15
@@ -93,6 +97,7 @@ Progress: [█████████░] 93%
 | Phase 06-drill-through-excel-export P03 | 15 | 2 tasks | 2 files |
 | Phase 06-drill-through-excel-export P04 | 45 | 3 tasks | 4 files |
 | Phase 07-column-display-ui-states P01 | 2 min | 2 tasks | 1 files |
+| Phase 07-column-display-ui-states P02 | 7 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -157,6 +162,8 @@ Recent decisions affecting current work:
 - [Phase 07-column-display-ui-states]: Promoted columnSizing to controlled state and included it in reset/sync/table-state paths.
 - [Phase 07-column-display-ui-states]: Persisted columnVisibility and columnSizing alongside pinning using component-scoped storage keys.
 - [Phase 07-column-display-ui-states]: Resize handle events stop propagation so drag interactions do not trigger header sorting.
+- [Phase 07-column-display-ui-states]: Pinned separators now come exclusively from useStickyStyles via deterministic getIsLastColumn/getIsFirstColumn edge detection.
+- [Phase 07-column-display-ui-states]: Sorted-active header visuals use theme tokens and merge before sticky positioning so pinned+sorted stays legible.
 
 ### Pending Todos
 
@@ -168,7 +175,7 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-15T18:32:08.535Z
-Stopped at: Completed 07-column-display-ui-states-01-PLAN.md
+Last session: 2026-03-15T18:41:36.955Z
+Stopped at: Completed 07-column-display-ui-states-02-PLAN.md
 Resume file: None
 
