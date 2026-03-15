@@ -11,8 +11,8 @@
 
 - [x] **QUAL-01**: All existing tests pass before any new development begins (establish green baseline)
 - [x] **QUAL-02**: Test coverage report generated and baseline documented
-- [ ] **QUAL-03**: Duplicate method `run_pivot_arrow()` in controller.py removed
-- [ ] **QUAL-04**: Column name sanitization secured against SQL injection
+- [x] **QUAL-03**: Duplicate method `run_pivot_arrow()` in controller.py removed
+- [x] **QUAL-04**: Column name sanitization secured against SQL injection
 - [x] **QUAL-05**: `tests/test_frontend_contract.py` collection executes no data-generation side effects (lazy fixture, no module-scope DuckDB init)
 - [x] **QUAL-06**: `dash_presentation/app.py` `update_pivot_table` has exactly one `except Exception` block (dead block removed)
 
@@ -199,8 +199,8 @@
 | CODE-02 | Phase 8 - Code Quality Refactor | Pending |
 | CODE-03 | Phase 8 - Code Quality Refactor | Pending |
 | CODE-04 | Phase 8 - Code Quality Refactor | Pending |
-| QUAL-03 | Phase 8 - Code Quality Refactor | Pending |
-| QUAL-04 | Phase 8 - Code Quality Refactor | Pending |
+| QUAL-03 | Phase 8 - Code Quality Refactor | Complete |
+| QUAL-04 | Phase 8 - Code Quality Refactor | Complete |
 | PKG-01 | Phase 9 - Packaging, Docs & CI/CD | Pending |
 | PKG-02 | Phase 9 - Packaging, Docs & CI/CD | Pending |
 | PKG-03 | Phase 9 - Packaging, Docs & CI/CD | Pending |
