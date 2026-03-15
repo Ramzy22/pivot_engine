@@ -840,8 +840,8 @@ class ScalablePivotController(PivotController):
         # Apply text filter (case-insensitive ilike on first string column)
         if text_filter:
             str_cols = [
-                f.name for f in table_expr.schema()
-                if str(f.type).startswith('string') or str(f.type) == 'utf8'
+                name for name, dtype in table_expr.schema().items()
+                if str(dtype).startswith('string') or str(dtype) == 'utf8'
             ]
             if str_cols:
                 table_expr = table_expr.filter(
