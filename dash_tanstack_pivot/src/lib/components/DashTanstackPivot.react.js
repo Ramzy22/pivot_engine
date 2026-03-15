@@ -2553,8 +2553,6 @@ export default function DashTanstackPivot(props) {
 
     // Use the custom hook
     const { getHeaderStickyStyle, getStickyStyle } = useStickyStyles(
-        visibleLeafColumns,
-        columnPinning,
         theme,
         leftCols,
         rightCols
@@ -2871,7 +2869,7 @@ export default function DashTanstackPivot(props) {
     }, [rows, columns, rowCount, table]);
 
     // --- Helper to Render a single Cell with useCallback ---
-            const renderCell = useCallback((cell, virtualRowIndex, isLastPinnedLeft = false, isFirstPinnedRight = false, isVirtualRow = false) => {
+            const renderCell = useCallback((cell, virtualRowIndex, isVirtualRow = false) => {
                 if (!cell) return null;
                 
                 const row = cell.row;
@@ -2897,16 +2895,6 @@ export default function DashTanstackPivot(props) {
             if (isSelected) bg = theme.select;
     
             const stickyStyle = getStickyStyle(cell.column, bg);
-            
-            // Add boundary shadows
-            if (isLastPinnedLeft) {
-                stickyStyle.boxShadow = '2px 0 5px -2px rgba(0,0,0,0.2)';
-                stickyStyle.zIndex = (stickyStyle.zIndex || 0) + 1;
-            }
-            if (isFirstPinnedRight) {
-                stickyStyle.boxShadow = '-2px 0 5px -2px rgba(0,0,0,0.2)';
-                stickyStyle.zIndex = (stickyStyle.zIndex || 0) + 1;
-            }
     
             const condStyle = getConditionalStyle(cell.column.id, cell.getValue());
             
@@ -2969,7 +2957,7 @@ export default function DashTanstackPivot(props) {
     // NEW: Render Header Cell for Split Sections
     // overrideWidth: when set, replaces the computed section width (used for partially-visible
     // group headers during center-column virtualization so the width matches only the visible leaves).
-    const renderHeaderCell = (header, level, isLastPinnedLeft = false, isFirstPinnedRight = false, renderSection = 'center', overrideWidth = null) => {
+    const renderHeaderCell = (header, level, renderSection = 'center', overrideWidth = null) => {
         const isGroupHeader = header.column.columns && header.column.columns.length > 0;
         const isSorted = header.column.getIsSorted();
         const sortIndex = header.column.getSortIndex();
@@ -2989,7 +2977,7 @@ export default function DashTanstackPivot(props) {
         const headerWidth = overrideWidth !== null ? overrideWidth : (sectionWidth || header.getSize());
 
         // Calculate sticky style for pinned headers using the hook
-        const stickyStyle = getHeaderStickyStyle(header, level, isLastPinnedLeft, isFirstPinnedRight, renderSection);
+        const stickyStyle = getHeaderStickyStyle(header, level, renderSection);
 
         return (
             <div key={header.id} style={{
@@ -3818,8 +3806,8 @@ export default function DashTanstackPivot(props) {
                                  {/* Left Section */}
                                  <div style={{position: 'sticky', left: 0, zIndex: 4, background: theme.headerBg}}>
                                      {table.getLeftHeaderGroups().map((group, level) => (
-                                         <div key={group.id} style={{display: 'flex', height: rowHeight, borderBottom: `1px solid ${theme.border}`}}>
-                                             {group.headers.map((header, idx) => renderHeaderCell(header, level, idx === group.headers.length - 1, false, 'left'))}
+                                             <div key={group.id} style={{display: 'flex', height: rowHeight, borderBottom: `1px solid ${theme.border}`}}>
+                                             {group.headers.map((header) => renderHeaderCell(header, level, 'left'))}
                                          </div>
                                      ))}
                                      {showFloatingFilters && (
@@ -3868,7 +3856,7 @@ export default function DashTanstackPivot(props) {
                                              <div key={group.id} style={{display: 'flex', height: rowHeight, borderBottom: `1px solid ${theme.border}`}}>
                                                  <div style={{ width: beforeWidth, flexShrink: 0 }} />
                                                  {visibleHeaders.map(({ header, visWidth }) =>
-                                                     renderHeaderCell(header, level, false, false, 'center', visWidth)
+                                                     renderHeaderCell(header, level, 'center', visWidth)
                                                  )}
                                                  <div style={{ width: afterWidth, flexShrink: 0 }} />
                                              </div>
@@ -3939,7 +3927,7 @@ export default function DashTanstackPivot(props) {
                                  <div style={{position: 'sticky', right: 0, zIndex: 4, background: theme.headerBg}}>
                                      {table.getRightHeaderGroups().map((group, level) => (
                                          <div key={group.id} style={{display: 'flex', height: rowHeight, borderBottom: `1px solid ${theme.border}`}}>
-                                             {group.headers.map((header, idx) => renderHeaderCell(header, level, false, idx === 0, 'right'))}
+                                             {group.headers.map((header) => renderHeaderCell(header, level, 'right'))}
                                          </div>
                                      ))}
                                      {showFloatingFilters && (
@@ -3985,14 +3973,14 @@ export default function DashTanstackPivot(props) {
                                          borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
                                          boxShadow: isLastPinnedTop ? `0 2px 4px -2px ${theme.border}80` : 'none'
                                      }}>
-                                         {row.getLeftVisibleCells().map((cell, idx) => renderCell(cell, i, idx === leftCols.length - 1, false, false))}
+                                         {row.getLeftVisibleCells().map((cell) => renderCell(cell, i, false))}
                                          <div style={{ width: beforeWidth, flexShrink: 0 }} />
                                          {virtualCenterCols.map(virtualCol => {
                                              const cell = row.getCenterVisibleCells()[virtualCol.index];
-                                             return renderCell(cell, i, false, false, false);
+                                             return renderCell(cell, i, false);
                                          })}
                                          <div style={{ width: afterWidth, flexShrink: 0 }} />
-                                         {row.getRightVisibleCells().map((cell, idx) => renderCell(cell, i, false, idx === 0, false))}
+                                         {row.getRightVisibleCells().map((cell) => renderCell(cell, i, false))}
                                      </div>
                                  )
                              })}
@@ -4143,14 +4131,14 @@ export default function DashTanstackPivot(props) {
                                               borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
                                               transition: rowVirtualizer.isScrolling ? 'none' : 'background-color 0.2s'
                                           }}>
-                                              {row.getLeftVisibleCells().map((cell, idx) => renderCell(cell, virtualRow.index, idx === leftCols.length - 1, false, true))}
+                                              {row.getLeftVisibleCells().map((cell) => renderCell(cell, virtualRow.index, true))}
                                               <div style={{ width: beforeWidth, flexShrink: 0 }} />
                                               {virtualCenterCols.map(virtualCol => {
                                                   const cell = row.getCenterVisibleCells()[virtualCol.index];
-                                                  return renderCell(cell, virtualRow.index, false, false, true);
+                                                  return renderCell(cell, virtualRow.index, true);
                                               })}
                                               <div style={{ width: afterWidth, flexShrink: 0 }} />
-                                              {row.getRightVisibleCells().map((cell, idx) => renderCell(cell, virtualRow.index, false, idx === 0, true))}
+                                              {row.getRightVisibleCells().map((cell) => renderCell(cell, virtualRow.index, true))}
                                           </div>
                                           {showRowTransitionLoader && (
                                               <div
@@ -4233,14 +4221,14 @@ export default function DashTanstackPivot(props) {
                                          borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
                                          boxShadow: isFirstPinnedBottom ? `0 -2px 4px -2px ${theme.border}80` : 'none'
                                      }}>
-                                         {row.getLeftVisibleCells().map((cell, idx) => renderCell(cell, i, idx === leftCols.length - 1, false, false))}
+                                         {row.getLeftVisibleCells().map((cell) => renderCell(cell, i, false))}
                                          <div style={{ width: beforeWidth, flexShrink: 0 }} />
                                          {virtualCenterCols.map(virtualCol => {
                                              const cell = row.getCenterVisibleCells()[virtualCol.index];
-                                             return renderCell(cell, i, false, false, false);
+                                             return renderCell(cell, i, false);
                                          })}
                                          <div style={{ width: afterWidth, flexShrink: 0 }} />
-                                         {row.getRightVisibleCells().map((cell, idx) => renderCell(cell, i, false, idx === 0, false))}
+                                         {row.getRightVisibleCells().map((cell) => renderCell(cell, i, false))}
                                      </div>
                                  )
                              })}
