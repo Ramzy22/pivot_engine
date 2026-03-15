@@ -65,6 +65,42 @@ export const themes = {
     }
 };
 
+export const gridDimensionTokens = Object.freeze({
+    density: Object.freeze({
+        spacingLabels: Object.freeze(['Compact', 'Normal', 'Loose']),
+        rowHeights: Object.freeze([32, 40, 56])
+    }),
+    columnWidths: Object.freeze({
+        schemaFallback: 140,
+        rowNumber: 50,
+        hierarchy: 250,
+        dimension: 150,
+        measure: 130,
+        subtotal: 130,
+        collapsedPlaceholder: 60
+    }),
+    autoSize: Object.freeze({
+        headerPadding: 40,
+        cellPadding: 24,
+        minWidth: 60,
+        maxWidth: 600
+    })
+});
+
+export const mergeStateStyles = (...layers) =>
+    layers.reduce((merged, layer) => {
+        if (!layer || typeof layer !== 'object') return merged;
+        Object.entries(layer).forEach(([key, value]) => {
+            if (value === undefined || value === null) return;
+            if (key === 'boxShadow' && merged.boxShadow) {
+                merged.boxShadow = `${merged.boxShadow}, ${value}`;
+                return;
+            }
+            merged[key] = value;
+        });
+        return merged;
+    }, {});
+
 export const isDarkTheme = (theme) => theme && theme.name === 'dark';
 
 export const getStyles = (theme) => ({

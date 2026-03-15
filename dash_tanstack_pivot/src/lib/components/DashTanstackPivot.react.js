@@ -11,7 +11,7 @@ import {
 import { useVirtualizer } from '@tanstack/react-virtual';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
-import { themes, getStyles, isDarkTheme } from '../utils/styles';
+import { themes, getStyles, isDarkTheme, gridDimensionTokens, mergeStateStyles } from '../utils/styles';
 import Icons from './Icons';
 const debugLog = process.env.NODE_ENV !== 'production'
     ? (...args) => console.log('[pivot-grid]', ...args)
@@ -81,6 +81,9 @@ const loadingAnimationStyles = `
     to { transform: rotate(360deg); }
 }
 `;
+
+const getStickyHeaderHeight = (headerGroupCount, rowHeight, showFloatingFilters) =>
+    (headerGroupCount * rowHeight) + (showFloatingFilters ? rowHeight : 0);
 
 export default function DashTanstackPivot(props) {
     const { 
@@ -276,8 +279,10 @@ export default function DashTanstackPivot(props) {
 
     const [colorScale, setColorScale] = useState(false);
     const [spacingMode, setSpacingMode] = useState(0);
-    const spacingLabels = ['Compact', 'Normal', 'Loose'];
-    const rowHeights = [32, 40, 56];
+    const spacingLabels = gridDimensionTokens.density.spacingLabels;
+    const rowHeights = gridDimensionTokens.density.rowHeights;
+    const defaultColumnWidths = gridDimensionTokens.columnWidths;
+    const autoSizeBounds = gridDimensionTokens.autoSize;
     
     const [colExpanded, setColExpanded] = useState({});
     const [contextMenu, setContextMenu] = useState(null);
@@ -690,11 +695,11 @@ export default function DashTanstackPivot(props) {
         if (colIds.length > 0) {
             setCachedColSchema({
                 total_center_cols: colIds.length,
-                columns: colIds.map((id, i) => ({ index: i, id, size: 140 }))
+                columns: colIds.map((id, i) => ({ index: i, id, size: defaultColumnWidths.schemaFallback }))
             });
             colSchemaEpochRef.current = stateEpoch;
         }
-    }, [serverSide, filteredData, cachedColSchema, stateEpoch, rowFields, colFields]);
+    }, [serverSide, filteredData, cachedColSchema, stateEpoch, rowFields, colFields, defaultColumnWidths.schemaFallback]);
 
     // Compute column request window and store in refs for use in field-zone effect
     const COL_BLOCK_SIZE = 20;
@@ -1364,17 +1369,17 @@ export default function DashTanstackPivot(props) {
         const column = table.getColumn(columnId);
         const header = column.columnDef.header;
         const headerText = typeof header === 'string' ? header : columnId;
-        maxWidth = context.measureText(headerText).width + 40; 
+        maxWidth = context.measureText(headerText).width + autoSizeBounds.headerPadding;
         
         sampleRows.forEach(row => {
             const cellValue = row.getValue(columnId);
             const text = formatValue(cellValue); 
-            const width = context.measureText(text).width + 24; 
+            const width = context.measureText(text).width + autoSizeBounds.cellPadding;
             if (width > maxWidth) maxWidth = width;
         });
         
-        maxWidth = Math.min(maxWidth, 600);
-        maxWidth = Math.max(maxWidth, 60);
+        maxWidth = Math.min(maxWidth, autoSizeBounds.maxWidth);
+        maxWidth = Math.max(maxWidth, autoSizeBounds.minWidth);
         
         table.setColumnSizing(old => ({
             ...old,
@@ -1459,11 +1464,11 @@ export default function DashTanstackPivot(props) {
         const hierarchyCols = [];
 
         if (showRowNumbers) {
-             hierarchyCols.push({
-                id: '__row_number__',
-                header: '#',
-                size: 50,
-                enablePinning: false, // User Request: Cannot be changed
+                hierarchyCols.push({
+                    id: '__row_number__',
+                    header: '#',
+                    size: defaultColumnWidths.rowNumber,
+                    enablePinning: false, // User Request: Cannot be changed
                 cell: ({ row }) => (
                     <div
                         style={{
@@ -1504,7 +1509,7 @@ export default function DashTanstackPivot(props) {
                     id: 'hierarchy',
                     accessorFn: row => row._id,
                     header: rowFields.join(' > '),
-                    size: 250,
+                    size: defaultColumnWidths.hierarchy,
                     sortingFn, // Apply sort
                     cell: ({ row }) => {
                         const depth = (row.original.depth !== undefined) ? row.original.depth : (row.depth || 0);
@@ -1549,7 +1554,7 @@ export default function DashTanstackPivot(props) {
                     id: field,
                     accessorKey: field,
                     header: field,
-                    size: 150,
+                    size: defaultColumnWidths.dimension,
                     enablePinning: true,
                     sortingFn,
                     cell: ({ row, getValue }) => {
@@ -1612,7 +1617,7 @@ export default function DashTanstackPivot(props) {
                 id: getKey('', c.field, c.agg),
                 accessorFn: row => row[getKey('', c.field, c.agg)] ,
                 header: `${c.field} (${c.agg})`,
-                size: 130,
+                size: defaultColumnWidths.measure,
                 enablePinning: true,
                 sortingFn,
                 cell: info => (
@@ -1656,7 +1661,7 @@ export default function DashTanstackPivot(props) {
                         id: k,
                         accessorFn: row => row[k],
                         header: k,
-                        size: 130,
+                        size: defaultColumnWidths.subtotal,
                         sortingFn,
                         cell: info => {
                             const v = info.getValue();
@@ -1740,7 +1745,7 @@ export default function DashTanstackPivot(props) {
                                  current.columns.push({
                                     id: pathKey + "_collapsed",
                                     header: "...",
-                                    size: 60,
+                                    size: defaultColumnWidths.collapsedPlaceholder,
                                     accessorFn: () => "",
                                     cell: () => <div style={{color:'#999', textAlign:'center'}}>...</div>
                                 });
@@ -1767,7 +1772,7 @@ export default function DashTanstackPivot(props) {
                              current.columns.push({
                                 id: pathKey + "_collapsed",
                                 header: "...",
-                                size: 60,
+                                size: defaultColumnWidths.collapsedPlaceholder,
                                 accessorFn: () => "",
                                 cell: () => <div style={{color:'#999', textAlign:'center'}}>...</div>
                             });
@@ -1867,7 +1872,7 @@ export default function DashTanstackPivot(props) {
     // Doing it after the response avoids a concurrent viewport request that
     // would race with (and stale-reject) the expansion request.
     const pendingExpansionRef = useRef(null);
-    const rowHeight = rowHeights[spacingMode] || 32;
+    const rowHeight = rowHeights[spacingMode] || rowHeights[0];
 
     // Cache key: only structural changes that require a full cache wipe.
     // Expansion and rowCount are intentionally excluded — expansion uses targeted
@@ -2490,8 +2495,8 @@ export default function DashTanstackPivot(props) {
     // 1. Row Virtualizer (Managed by useServerSideRowModel)
     const virtualRows = rowVirtualizer.getVirtualItems();
     const showColumnLoadingSkeletons = serverSide && structuralInFlight && pendingColumnSkeletonCount > 0;
-    const columnSkeletonWidth = 140;
-    const stickyHeaderHeight = (table.getHeaderGroups().length * rowHeight) + (showFloatingFilters ? rowHeight : 0);
+    const columnSkeletonWidth = defaultColumnWidths.schemaFallback;
+    const stickyHeaderHeight = getStickyHeaderHeight(table.getHeaderGroups().length, rowHeight, showFloatingFilters);
     const bodyRowsTopOffset = stickyHeaderHeight + (effectiveTopRows.length * rowHeight);
 
     useEffect(() => {
@@ -2891,12 +2896,41 @@ export default function DashTanstackPivot(props) {
             const rowBackground = (row.original && row.original._isTotal)
                 ? (isDarkTheme(theme) ? '#1a2e1a' : '#f0f7f0')
                 : (isDarkTheme(theme) ? '#212121' : '#fff');
-            let bg = rowBackground;
-            if (isSelected) bg = theme.select;
-    
-            const stickyStyle = getStickyStyle(cell.column, bg);
-    
             const condStyle = getConditionalStyle(cell.column.id, cell.getValue());
+            const sortedBodyStyle = col.getIsSorted?.()
+                ? {
+                    background: theme.sortedHeaderBg || theme.select,
+                    color: theme.sortedHeaderText || theme.text
+                }
+                : {};
+            const stickyBaseStyle = mergeStateStyles(
+                { background: rowBackground },
+                condStyle,
+                sortedBodyStyle
+            );
+            const stickyStyle = getStickyStyle(cell.column, stickyBaseStyle.background);
+            const selectedOverlayStyle = isSelected
+                ? {
+                    background: theme.select,
+                    boxShadow: `inset 0 0 0 1px ${theme.primary}`
+                }
+                : {};
+            const focusOverlayStyle = isLastSelected
+                ? {
+                    outline: `1px solid ${theme.primary}`,
+                    outlineOffset: '-1px'
+                }
+                : {};
+            const fillOverlayStyle = isFillSelected
+                ? { boxShadow: `inset 0 0 0 1px ${theme.primary}` }
+                : {};
+            const cellStateStyle = mergeStateStyles(
+                stickyBaseStyle,
+                stickyStyle,
+                selectedOverlayStyle,
+                focusOverlayStyle,
+                fillOverlayStyle
+            );
             
             // Fix row number ordering
             let cellContent;
@@ -2924,12 +2958,9 @@ export default function DashTanstackPivot(props) {
                         justifyContent: isHierarchy ? 'flex-start' : 'flex-end',
                         fontWeight: (row.original && row.original._isTotal) ? 700 : ((isHierarchy && row.getIsGrouped()) ? 500 : 400),
                         color: (row.original && row.original._isTotal) ? theme.text : undefined,
-                        background: bg,
-                        ...stickyStyle,
-                        ...condStyle,
-                        ...(isFillSelected ? {boxShadow: `inset 0 0 0 1px ${theme.primary}`} : {}),
+                        ...cellStateStyle,
                         userSelect: 'none',
-                        position: stickyStyle && stickyStyle.position === 'sticky' ? 'sticky' : 'relative',
+                        position: cellStateStyle.position === 'sticky' ? 'sticky' : 'relative',
                     }}
                     onContextMenu={e => handleContextMenu(e, cell.getValue(), cell.column.id, row)}
                 >
@@ -2975,29 +3006,42 @@ export default function DashTanstackPivot(props) {
             .filter(column => sectionLeafIds.has(column.id))
             .reduce((sum, column) => sum + column.getSize(), 0);
         const headerWidth = overrideWidth !== null ? overrideWidth : (sectionWidth || header.getSize());
-        const sortedActiveStyle = !isGroupHeader && isSorted ? {
+        const sortedHeaderStyle = !isGroupHeader && isSorted ? {
             background: theme.sortedHeaderBg || theme.select,
             borderBottom: `1px solid ${theme.sortedHeaderBorder || theme.primary}`,
             color: theme.sortedHeaderText || theme.primary,
             fontWeight: 700
         } : {};
+        const isHeaderSelected = !isGroupHeader && selectedCols.has(header.column.id);
+        const interactionOverlayStyle = !isGroupHeader && (isFocusedHeader || isHeaderSelected || isResizingColumn)
+            ? { boxShadow: `inset 0 0 0 1px ${theme.primary}` }
+            : {};
         const sortIconColor = isSorted ? (theme.sortedHeaderText || theme.primary) : theme.textSec;
 
         // Calculate sticky style for pinned headers using the hook
-        const stickyStyle = getHeaderStickyStyle(header, level, renderSection, sortedActiveStyle.background);
+        const stickyStyle = getHeaderStickyStyle(
+            header,
+            level,
+            renderSection,
+            mergeStateStyles({ background: theme.headerBg }, sortedHeaderStyle).background
+        );
+        const headerStateStyle = mergeStateStyles(
+            styles.headerCell,
+            sortedHeaderStyle,
+            stickyStyle,
+            interactionOverlayStyle
+        );
 
         return (
             <div key={header.id} style={{
-                ...styles.headerCell,
-                ...sortedActiveStyle,
+                ...headerStateStyle,
                 width: headerWidth,
                 minWidth: headerWidth,
                 flexShrink: 0,
                 height: rowHeight,
-                ...stickyStyle,
                 cursor: 'pointer',
                 // Position is handled by getHeaderStickyStyle or parent container
-                position: stickyStyle.position || 'relative'
+                position: headerStateStyle.position || 'relative'
             }}
             role="columnheader"
             aria-sort={isSorted || 'none'}
@@ -3033,7 +3077,7 @@ export default function DashTanstackPivot(props) {
                     justifyContent: header.column.id === 'hierarchy' ? 'flex-start' : 'center',
                     padding: '0 4px',
                     overflow: 'hidden',
-                    minWidth: '60px'
+                    minWidth: autoSizeBounds.minWidth
                 }}>
                 <span style={{
                     overflow:'hidden',
@@ -3969,7 +4013,7 @@ export default function DashTanstackPivot(props) {
                              {effectiveTopRows.map((row, i) => {
                                  const isExpandedRow = row.getIsExpanded();
                                  const isLastPinnedTop = i === effectiveTopRows.length - 1;
-                                 const headerHeight = (table.getHeaderGroups().length * rowHeight) + (showFloatingFilters ? rowHeight : 0);
+                                 const headerHeight = stickyHeaderHeight;
                                  return (
                                      <div
                                         key={row.id}
@@ -4031,8 +4075,7 @@ export default function DashTanstackPivot(props) {
 
                              {/* Center Virtualized Rows */}
                              {virtualRows.map(virtualRow => {
-                                 const headerHeight = (table.getHeaderGroups().length * rowHeight) + (showFloatingFilters ? rowHeight : 0);
-                                 const topOffset = headerHeight + (effectiveTopRows.length * rowHeight);
+                                 const topOffset = bodyRowsTopOffset;
                                  
                                  let row;
                                  
