@@ -30,6 +30,9 @@ import ContextMenu from './Table/ContextMenu';
 import EditableCell from './Table/EditableCell';
 import StatusBar from './Table/StatusBar';
 import DrillThroughModal from './Table/DrillThroughModal';
+import PivotErrorBoundary from './PivotErrorBoundary';
+import { usePersistence } from '../hooks/usePersistence';
+import { useFilteredData } from '../hooks/useFilteredData';
 
 const getOrCreateSessionId = (componentId = 'pivot-grid') => {
     if (typeof window === 'undefined') {
@@ -125,35 +128,7 @@ export default function DashTanstackPivot(props) {
 
 
     // --- Persistence Helper ---
-    const getStorage = () => {
-        if (persistence_type === 'local') return window.localStorage;
-        if (persistence_type === 'session') return window.sessionStorage;
-        return null;
-    };
-
-    const loadPersistedState = (key, defaultValue) => {
-        if (!persistence) return defaultValue;
-        const storage = getStorage();
-        if (!storage) return defaultValue;
-        try {
-            const saved = storage.getItem(`${id}-${key}`);
-            return saved ? JSON.parse(saved) : defaultValue;
-        } catch (e) {
-            console.warn('Error loading persistence for', key, e);
-            return defaultValue;
-        }
-    };
-
-    const savePersistedState = (key, value) => {
-        if (!persistence) return;
-        const storage = getStorage();
-        if (!storage) return;
-        try {
-            storage.setItem(`${id}-${key}`, JSON.stringify(value));
-        } catch (e) {
-            console.warn('Error saving persistence for', key, e);
-        }
-    };
+    const { load: loadPersistedState, save: savePersistedState } = usePersistence(id, persistence, persistence_type);
 
         const [notification, setNotification] = useState(null);
 
@@ -1287,56 +1262,7 @@ export default function DashTanstackPivot(props) {
         });
     };
 
-    const filteredData = useMemo(() => {
-        if (serverSide) return data || [];
-        if (!data || !data.length) return [];
-        
-        return data.filter(row => {
-            return Object.entries(filters).every(([colId, filterGroup]) => {
-                if (!filterGroup) return true;
-                // Handle legacy string filters if any remain
-                if (typeof filterGroup === 'string') {
-                    return String(row[colId]).toLowerCase().includes(filterGroup.toLowerCase());
-                }
-                
-                if (!filterGroup.conditions || filterGroup.conditions.length === 0) return true;
-                
-                const rowVal = row[colId];
-                const passes = filterGroup.conditions.map(cond => {
-                    let val = cond.value;
-                    if (cond.type === 'in') {
-                        return Array.isArray(val) && val.includes(rowVal);
-                    }
-                    
-                    const rStr = String(rowVal).toLowerCase();
-                    const vStr = String(val).toLowerCase();
-                    
-                    if (cond.type === 'contains') return rStr.includes(vStr);
-                    if (cond.type === 'startsWith') return rStr.startsWith(vStr);
-                    if (cond.type === 'endsWith') return rStr.endsWith(vStr);
-                    if (cond.type === 'eq' || cond.type === 'equals') return cond.caseSensitive ? String(rowVal) === String(val) : rStr === vStr;
-                    if (cond.type === 'ne' || cond.type === 'notEquals') return cond.caseSensitive ? String(rowVal) !== String(val) : rStr !== vStr;
-                    
-                    const rNum = Number(rowVal);
-                    const vNum = Number(val);
-                    if (!isNaN(rNum) && !isNaN(vNum)) {
-                        if (cond.type === 'gt') return rNum > vNum;
-                        if (cond.type === 'lt') return rNum < vNum;
-                        if (cond.type === 'gte') return rNum >= vNum;
-                        if (cond.type === 'lte') return rNum <= vNum;
-                        if (cond.type === 'between') {
-                            const vNum2 = Number(cond.value2);
-                            return rNum >= vNum && rNum <= vNum2;
-                        }
-                    }
-                    return true;
-                });
-                
-                if (filterGroup.operator === 'OR') return passes.some(p => p);
-                return passes.every(p => p);
-            });
-        });
-    }, [data, filters, serverSide]);
+    const filteredData = useFilteredData(data, filters, serverSide);
 
     const staticTotal = useMemo(() => ({ _isTotal: true, _path: '__grand_total__', _id: 'Grand Total', __isGrandTotal__: true }), []);
     const staticMinMax = useMemo(() => ({}), []);
@@ -3203,6 +3129,7 @@ export default function DashTanstackPivot(props) {
     };
 
     return (
+        <PivotErrorBoundary key={dataVersion}>
         <div id={id} style={{ ...styles.root, ...style }}>
             <style>{loadingAnimationStyles}</style>
             <div style={srOnly} role="status" aria-live="polite">{announcement}</div>
@@ -4311,6 +4238,7 @@ export default function DashTanstackPivot(props) {
                 }}
             />
         </div>
+        </PivotErrorBoundary>
     );
 };
 
