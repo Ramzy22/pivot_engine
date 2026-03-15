@@ -18,7 +18,7 @@ This is a brownfield project with a substantial existing codebase (~65 test file
 - [x] **Phase 4: Data Input API** - Unify data prop to accept DataFrame, polars, Ibis, or connection string with auto-detection (completed 2026-03-14)
 - [x] **Phase 5: Field Zone UI** - Complete drag-and-drop sidebar with four zones, aggregation selector, bidirectional Dash props (completed 2026-03-15)
 - [ ] **Phase 6: Drill-Through & Excel Export** - Cell drill-through modal (server-side via REST endpoint, not Dash callbacks) with pagination, and Excel .xlsx download
-- [ ] **Phase 7: Column Display & UI States** - Review and correct all column states (pinned, sorted, hidden, resized), their visual indicators, and UI defaults
+- [x] **Phase 7: Column Display & UI States** - Review and correct all column states (pinned, sorted, hidden, resized), their visual indicators, and UI defaults (completed 2026-03-15)
 - [ ] **Phase 8: Code Quality Refactor** - Split 4,338-line component, add error boundaries, fix stale closures and filter duplication
 - [ ] **Phase 9: Packaging, Docs & CI/CD** - PyPI publishing, README, examples, GitHub Actions
 
@@ -218,8 +218,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 → 3.2 → 4 → 5 → 6
 | 4. Data Input API | 3/3 | Complete | 2026-03-14 |
 | 5. Field Zone UI | 4/4 | Complete | 2026-03-15 |
 | 6. Drill-Through & Excel Export | 3/4 | In Progress|  |
-| 7. Column Display & UI States | 2/3 | In Progress|  |
+| 7. Column Display & UI States | 3/3 | Complete | 2026-03-15 |
 | 8. Code Quality Refactor | 0/4 | Not started | - |
 | 9. Packaging, Docs & CI/CD | 0/TBD | Not started | - |
-
 
