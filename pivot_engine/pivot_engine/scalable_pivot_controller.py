@@ -837,16 +837,21 @@ class ScalablePivotController(PivotController):
         if filter_expr is not None:
             table_expr = table_expr.filter(filter_expr)
 
-        # Apply text filter (case-insensitive ilike on first string column)
+        # Apply text filter — OR across all columns cast to string (case-insensitive)
         if text_filter:
-            str_cols = [
-                name for name, dtype in table_expr.schema().items()
-                if str(dtype).startswith('string') or str(dtype) == 'utf8'
-            ]
-            if str_cols:
-                table_expr = table_expr.filter(
-                    table_expr[str_cols[0]].ilike(f'%{text_filter}%')
-                )
+            text_lower = text_filter.lower()
+            conditions = []
+            for col_name in table_expr.columns:
+                col = table_expr[col_name]
+                try:
+                    conditions.append(col.cast('string').lower().contains(text_lower))
+                except Exception:
+                    pass  # skip columns that cannot be cast to string
+            if conditions:
+                combined = conditions[0]
+                for c in conditions[1:]:
+                    combined = combined | c
+                table_expr = table_expr.filter(combined)
 
         # Apply sort (before limit/offset)
         if sort_col and sort_col in table_expr.columns:
