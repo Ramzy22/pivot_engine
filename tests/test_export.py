@@ -71,21 +71,30 @@ def _make_spec(table: str = 'test_sales') -> PivotSpec:
 # ---------------------------------------------------------------------------
 
 def test_get_drill_through_data_pagination(controller_with_data):
-    """asyncio.run(get_drill_through_data(..., limit=5, offset=0)) returns
-    exactly 5 rows; offset=5 returns the next 5 (no overlap with first 5).
+    """asyncio.run(get_drill_through_data(..., limit=5, offset=0)) returns a dict
+    with 'rows' (exactly 5) and 'total_rows'; offset=5 returns the next 5 (no overlap).
 
     Tests the Python controller directly — no HTTP round-trip.
     """
     spec = _make_spec()
-    page0 = asyncio.run(
+    result0 = asyncio.run(
         controller_with_data.get_drill_through_data(spec, [], limit=5, offset=0)
     )
-    page1 = asyncio.run(
+    result1 = asyncio.run(
         controller_with_data.get_drill_through_data(spec, [], limit=5, offset=5)
     )
 
+    assert isinstance(result0, dict), f"Expected dict return, got {type(result0)}"
+    assert 'rows' in result0, f"'rows' key missing from result: {result0.keys()}"
+    assert 'total_rows' in result0, f"'total_rows' key missing from result: {result0.keys()}"
+
+    page0 = result0['rows']
+    page1 = result1['rows']
+
     assert len(page0) == 5, f"Expected 5 rows for page 0, got {len(page0)}"
     assert len(page1) == 5, f"Expected 5 rows for page 1, got {len(page1)}"
+
+    assert result0['total_rows'] == 20, f"Expected total_rows=20, got {result0['total_rows']}"
 
     # Extract sales values (unique per row in this dataset) to check non-overlap
     sales0 = {r['sales'] for r in page0}
@@ -107,10 +116,11 @@ def test_get_drill_through_data_coord_filters(controller_with_data):
     """
     spec = _make_spec()
     filters = [{'field': 'region', 'op': '=', 'value': 'North'}]
-    rows = asyncio.run(
+    result = asyncio.run(
         controller_with_data.get_drill_through_data(spec, filters, limit=20, offset=0)
     )
 
+    rows = result['rows']
     assert len(rows) > 0, "Expected at least one row with region='North'"
     for row in rows:
         assert row['region'] == 'North', (
@@ -123,9 +133,35 @@ def test_get_drill_through_data_coord_filters(controller_with_data):
 # ---------------------------------------------------------------------------
 
 def test_get_drill_through_data_sort(controller_with_data):
-    """After Plan 02 adds sort support, passing sort=[{'col':'sales','dir':'desc'}]
-    returns rows in descending sales order.
+    """Passing sort_col='sales' and sort_dir='desc' returns rows in descending sales order.
+    Passing sort_col='sales' and sort_dir='asc' returns rows in ascending sales order.
 
-    Skipped until Plan 02 extends get_drill_through_data with sort params.
+    Tests Plan 02 extension of get_drill_through_data with sort params.
     """
-    pytest.skip("sort param not yet implemented — Plan 02 adds it")
+    spec = _make_spec()
+    result_desc = asyncio.run(
+        controller_with_data.get_drill_through_data(
+            spec, [], limit=5, offset=0, sort_col='sales', sort_dir='desc'
+        )
+    )
+    result_asc = asyncio.run(
+        controller_with_data.get_drill_through_data(
+            spec, [], limit=5, offset=0, sort_col='sales', sort_dir='asc'
+        )
+    )
+
+    rows_desc = result_desc['rows']
+    rows_asc = result_asc['rows']
+
+    assert len(rows_desc) == 5, f"Expected 5 rows, got {len(rows_desc)}"
+    assert len(rows_asc) == 5, f"Expected 5 rows, got {len(rows_asc)}"
+
+    sales_desc = [r['sales'] for r in rows_desc]
+    sales_asc = [r['sales'] for r in rows_asc]
+
+    assert sales_desc == sorted(sales_desc, reverse=True), (
+        f"Rows not in descending order: {sales_desc}"
+    )
+    assert sales_asc == sorted(sales_asc), (
+        f"Rows not in ascending order: {sales_asc}"
+    )

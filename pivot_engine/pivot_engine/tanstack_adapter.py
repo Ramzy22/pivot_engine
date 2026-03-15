@@ -7,11 +7,17 @@ from dataclasses import dataclass
 from enum import Enum
 import asyncio
 import logging
+import math
 from pivot_engine.scalable_pivot_controller import ScalablePivotController
 from pivot_engine.types.pivot_spec import PivotSpec, Measure
 from pivot_engine.security import User, apply_rls_to_spec
 
 _adapter_logger = logging.getLogger("pivot_engine.adapter")
+
+
+def _is_missing_value(value: Any) -> bool:
+    """Treat both None and NaN as missing values from the engine layer."""
+    return value is None or (isinstance(value, float) and math.isnan(value))
 
 
 def _dedup_grand_total(rows: list) -> list:
@@ -25,7 +31,7 @@ def _dedup_grand_total(rows: list) -> list:
     seen_grand_total = False
     result = []
     for row in rows:
-        if row.get("_isTotal") or row.get("_id") == "Grand Total":
+        if row.get("_isTotal") or row.get("_id") == "Grand Total" or row.get("_path") == "__grand_total__":
             if seen_grand_total:
                 continue  # drop duplicate
             seen_grand_total = True
@@ -157,6 +163,7 @@ class TanStackResponse:
     total_rows: Optional[int] = None
     grouping: Optional[List[Dict[str, Any]]] = None
     version: Optional[int] = None
+    col_schema: Optional[Dict[str, Any]] = None
 
 
 class TanStackPivotAdapter:
@@ -166,6 +173,62 @@ class TanStackPivotAdapter:
         self.controller = controller
         self.hierarchy_state = {}  # Store expansion state
         self._debug = debug
+        # Cache center_col_ids per (table, frozenset(grouping)) so windowed requests
+        # reuse the schema from the last needs_col_schema=True response instead of
+        # rescanning all row dict keys on every scroll (O(rows*cols) → O(1)).
+        self._center_col_ids_cache: dict = {}
+
+    def _get_center_col_ids_from_rows(self, rows: list, row_meta_keys: set, pinned_ids: set) -> list:
+        """Return an ordered list of center (non-pinned, non-meta) column IDs from result rows."""
+        seen = []
+        seen_set = set()
+        for row in rows:
+            for col_id in row:
+                if col_id not in seen_set and col_id not in row_meta_keys and col_id not in pinned_ids:
+                    seen.append(col_id)
+                    seen_set.add(col_id)
+        return seen
+
+    def _apply_col_windowing(self, tanstack_result: 'TanStackResponse', request: 'TanStackRequest',
+                              col_start: int, col_end: Optional[int], needs_col_schema: bool) -> 'TanStackResponse':
+        """Apply column slicing and optionally build col_schema."""
+        if not needs_col_schema and col_end is None:
+            return tanstack_result
+
+        row_meta_keys = {
+            '_id', '_path', '_isTotal', '_level', '_expanded', '_parentPath',
+            '_has_children', '_is_expanded', 'depth', 'uuid', 'subRows'
+        }
+        pinned_ids = set(request.grouping or [])
+        cache_key = (request.table, frozenset(pinned_ids))
+
+        if needs_col_schema or cache_key not in self._center_col_ids_cache:
+            # Full scan: either the client asked for a schema refresh or the cache is cold.
+            center_col_ids = self._get_center_col_ids_from_rows(
+                tanstack_result.data, row_meta_keys, pinned_ids
+            )
+            self._center_col_ids_cache[cache_key] = center_col_ids
+        else:
+            center_col_ids = self._center_col_ids_cache[cache_key]
+
+        if needs_col_schema:
+            tanstack_result.col_schema = {
+                'total_center_cols': len(center_col_ids),
+                'columns': [{'index': i, 'id': col_id, 'size': 140}
+                            for i, col_id in enumerate(center_col_ids)]
+            }
+
+        if col_end is not None and center_col_ids:
+            safe_end = min(col_end, len(center_col_ids) - 1)
+            window_ids = set(center_col_ids[col_start:safe_end + 1])
+            keep_ids = window_ids | pinned_ids
+
+            tanstack_result.data = [
+                {k: v for k, v in row.items() if k in row_meta_keys or k in keep_ids}
+                for row in tanstack_result.data
+            ]
+
+        return tanstack_result
 
     def load_data(self, data, table_name: str) -> None:
         """
@@ -284,11 +347,16 @@ class TanStackPivotAdapter:
                     })
 
         
-        # Convert TanStack sorting to PivotSpec sorting
+        # Convert TanStack sorting to PivotSpec sorting.
+        # The hierarchy column has id="hierarchy" in the frontend but the backend
+        # needs the actual first row dimension field name.
         pivot_sort = []
         for sort_spec in request.sorting:
+            col_id = sort_spec['id']
+            if col_id == 'hierarchy' and request.grouping:
+                col_id = request.grouping[0]
             pivot_sort.append({
-                'field': sort_spec['id'],
+                'field': col_id,
                 'order': 'asc' if sort_spec.get('desc', False) is False else 'desc'
             })
         
@@ -387,9 +455,9 @@ class TanStackPivotAdapter:
                 # Populate _id if missing
                 if '_id' not in row:
                     is_grand_total = False
-                    # Check for Grand Total (first grouping column is None)
+                    # Check for Grand Total (first grouping column missing/NaN)
                     first_col = hierarchy_cols[0]
-                    if first_col in row and row[first_col] is None:
+                    if first_col in row and _is_missing_value(row[first_col]):
                         row['_id'] = 'Grand Total'
                         row['_isTotal'] = True
                         is_grand_total = True
@@ -398,11 +466,12 @@ class TanStackPivotAdapter:
                         # Find the correct dimension for this depth
                         if current_depth < len(hierarchy_cols):
                             target_col = hierarchy_cols[current_depth]
-                            row['_id'] = row.get(target_col, "")
+                            target_val = row.get(target_col)
+                            row['_id'] = "" if _is_missing_value(target_val) else target_val
                         else:
                             # Fallback: deepest non-None
                             for col in reversed(hierarchy_cols):
-                                if col in row and row[col] is not None:
+                                if col in row and not _is_missing_value(row[col]):
                                     row['_id'] = row[col]
                                     break
                         
@@ -421,9 +490,11 @@ class TanStackPivotAdapter:
                         for i in range(target_depth_idx + 1):
                             col = hierarchy_cols[i]
                             val = row.get(col)
-                            path_parts.append(str(val) if val is not None else "")
+                            if _is_missing_value(val):
+                                break
+                            path_parts.append(str(val))
                         
-                        row['_path'] = "|||".join(path_parts)
+                        row['_path'] = "|||".join(path_parts) if path_parts else str(row.get('_id', ''))
                     else:
                         row['_path'] = str(id(row))
 
@@ -581,8 +652,9 @@ class TanStackPivotAdapter:
                         'value': filter_obj.get('value')
                     })
         
-        # 3. Call controller
-        return await self.controller.get_drill_through_data(spec, drill_filters)
+        # 3. Call controller (returns dict with 'rows' and 'total_rows')
+        result = await self.controller.get_drill_through_data(spec, drill_filters)
+        return result['rows']
 
     async def handle_request(self, request: TanStackRequest, user: Optional[User] = None) -> TanStackResponse:
         """Handle a TanStack request directly"""
@@ -703,7 +775,7 @@ class TanStackPivotAdapter:
                 is_grand_total = (
                     current_depth == 0
                     and first_dim is not None
-                    and node.get(first_dim) is None
+                    and _is_missing_value(node.get(first_dim))
                 )
                 if is_grand_total:
                     nonlocal grand_total_emitted
@@ -719,14 +791,14 @@ class TanStackPivotAdapter:
 
                     # If this is a child level, the value for this dimension must not be None
                     # (unless it's truly a None value in the data, but usually None means subtotal)
-                    if current_depth > 0 and node.get(target_dim) is None:
+                    if current_depth > 0 and _is_missing_value(node.get(target_dim)):
                         continue
 
                     # Populate _id correctly based on current depth dimension
-                    if current_depth == 0 and node.get(target_dim) is None:
+                    if current_depth == 0 and _is_missing_value(node.get(target_dim)):
                         node['_id'] = 'Grand Total'
                         node['_isTotal'] = True
-                    elif target_dim in node:
+                    elif target_dim in node and not _is_missing_value(node.get(target_dim)):
                         node['_id'] = node[target_dim]
 
                 # Populate depth
@@ -743,7 +815,7 @@ class TanStackPivotAdapter:
 
                 if target_dim_idx < len(pivot_spec.rows):
                     current_dim = pivot_spec.rows[target_dim_idx]
-                    if current_dim in node and node[current_dim] is not None:
+                    if current_dim in node and not _is_missing_value(node[current_dim]):
                         child_path_parts.append(str(node[current_dim]))
 
                         child_key = "|||".join(child_path_parts)
@@ -771,7 +843,10 @@ class TanStackPivotAdapter:
     async def handle_virtual_scroll_request(self, request: TanStackRequest,
                                           start_row: int, end_row: int,
                                           expanded_paths: Union[List[List[str]], bool] = None,
-                                          user: Optional[User] = None) -> TanStackResponse:
+                                          user: Optional[User] = None,
+                                          col_start: int = 0,
+                                          col_end: Optional[int] = None,
+                                          needs_col_schema: bool = False) -> TanStackResponse:
         """Handle virtual scrolling request with start/end row indices"""
         # Convert request to pivot spec
         pivot_spec = self.convert_tanstack_request_to_pivot_spec(request)
@@ -797,7 +872,7 @@ class TanStackPivotAdapter:
             tanstack_result.data = _order_hierarchical_rows(
                 _move_grand_total_to_end(_dedup_grand_total(tanstack_result.data))
             )
-            return tanstack_result
+            return self._apply_col_windowing(tanstack_result, request, col_start, col_end, needs_col_schema)
 
         # Use the controller's virtual scrolling method
         if hasattr(self.controller, 'run_virtual_scroll_hierarchical'):
@@ -816,12 +891,11 @@ class TanStackPivotAdapter:
                     if total_visible > 0:
                         tanstack_result.total_rows = total_visible
 
-                # Unconditional single-grand-total enforcement: regardless of internal path taken,
-                # filter _isTotal rows to at most one before returning.
-                tanstack_result.data = _order_hierarchical_rows(
-                    _move_grand_total_to_end(_dedup_grand_total(tanstack_result.data))
-                )
-                return tanstack_result
+                # Virtual scroll already returns rows in correct window order from the backend.
+                # Only deduplicate grand total — do NOT reorder, as _order_hierarchical_rows
+                # uses local first_seen indices that shuffle partial windows incorrectly.
+                tanstack_result.data = _move_grand_total_to_end(_dedup_grand_total(tanstack_result.data))
+                return self._apply_col_windowing(tanstack_result, request, col_start, col_end, needs_col_schema)
 
             except Exception as e:
                 print(f"Virtual scroll failed: {e}, falling back to hierarchical load")
@@ -830,14 +904,14 @@ class TanStackPivotAdapter:
                 fallback_result.data = _order_hierarchical_rows(
                     _move_grand_total_to_end(_dedup_grand_total(fallback_result.data))
                 )
-                return fallback_result
+                return self._apply_col_windowing(fallback_result, request, col_start, col_end, needs_col_schema)
         else:
             # Fallback: Use regular hierarchical method
             fallback_result = await self.handle_hierarchical_request(request, expanded_paths)
             fallback_result.data = _order_hierarchical_rows(
                 _move_grand_total_to_end(_dedup_grand_total(fallback_result.data))
             )
-            return fallback_result
+            return self._apply_col_windowing(fallback_result, request, col_start, col_end, needs_col_schema)
 
     def get_schema_info(self, table_name: str) -> Dict[str, Any]:
         """Get schema information for TanStack column configuration"""

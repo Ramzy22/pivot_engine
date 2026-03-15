@@ -803,43 +803,68 @@ class ScalablePivotController(PivotController):
                  pq.write_table(table, sink)
                  yield sink.getvalue()
 
-    async def get_drill_through_data(self, spec: PivotSpec, filters: List[Dict[str, Any]], limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    async def get_drill_through_data(
+        self,
+        spec: PivotSpec,
+        filters: List[Dict[str, Any]],
+        limit: int = 100,
+        offset: int = 0,
+        sort_col: Optional[str] = None,
+        sort_dir: str = "asc",
+        text_filter: str = "",
+    ) -> Dict[str, Any]:
         """
         Fetch raw data for a specific set of filters (drill through).
+
+        Returns a dict with keys:
+          'rows'       - list of record dicts (paginated, filtered, sorted)
+          'total_rows' - total matching row count before pagination
         """
         import ibis
-        
+
         # We need a fresh query on the base table with filters
         table_expr = self.planner.con.table(spec.table)
-        
+
         # Merge spec filters and drill filters
         all_filters = (spec.filters or []) + filters
-        
+
         # Use builder to build filter expression
         if hasattr(self.planner, 'builder'):
-             filter_expr = self.planner.builder.build_filter_expression(table_expr, all_filters)
+            filter_expr = self.planner.builder.build_filter_expression(table_expr, all_filters)
         else:
-             # Fallback manual construction
-             filter_expr = None
-             # Simple implementation omitted for brevity as builder is expected
-             pass
+            filter_expr = None
 
         if filter_expr is not None:
-             table_expr = table_expr.filter(filter_expr)
-             
-        # Select all columns or specific if defined
-        # For drill through, usually we want all or a configured subset
-        # We'll return all for now
-        
-        query = table_expr.limit(limit, offset=offset)
-        
+            table_expr = table_expr.filter(filter_expr)
+
+        # Apply text filter (case-insensitive ilike on first string column)
+        if text_filter:
+            str_cols = [
+                f.name for f in table_expr.schema()
+                if str(f.type).startswith('string') or str(f.type) == 'utf8'
+            ]
+            if str_cols:
+                table_expr = table_expr.filter(
+                    table_expr[str_cols[0]].ilike(f'%{text_filter}%')
+                )
+
+        # Apply sort (before limit/offset)
+        if sort_col and sort_col in table_expr.columns:
+            col_expr = table_expr[sort_col]
+            table_expr = table_expr.order_by(
+                ibis.desc(col_expr) if sort_dir == 'desc' else ibis.asc(col_expr)
+            )
+
         # Execute in thread pool
         loop = asyncio.get_running_loop()
-        
-        # Lock wrapper removed
+
+        # Compute total_rows before applying limit/offset
+        total = await loop.run_in_executor(None, table_expr.count().execute)
+
+        query = table_expr.limit(limit, offset=offset)
         result = await loop.run_in_executor(None, query.execute)
-        
-        return result.to_dict('records')
+
+        return {"rows": result.to_dict('records'), "total_rows": int(total)}
 
     async def update_record(self, table_name: str, key_columns: Dict[str, Any], updates: Dict[str, Any]) -> bool:
         """
