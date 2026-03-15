@@ -29,6 +29,7 @@ import ColumnTreeItem from './Sidebar/ColumnTreeItem';
 import ContextMenu from './Table/ContextMenu';
 import EditableCell from './Table/EditableCell';
 import StatusBar from './Table/StatusBar';
+import DrillThroughModal from './Table/DrillThroughModal';
 
 const getOrCreateSessionId = (componentId = 'pivot-grid') => {
     if (typeof window === 'undefined') {
@@ -115,6 +116,7 @@ export default function DashTanstackPivot(props) {
         table: tableName,
         dataOffset = 0,
         dataVersion = 0,
+        drillEndpoint = '/api/drill-through',
     } = props;
 
 
@@ -178,6 +180,8 @@ export default function DashTanstackPivot(props) {
         const [layoutMode, setLayoutMode] = useState('hierarchy'); // hierarchy, tabular
         const [columnVisibility, setColumnVisibility] = useState(initialColumnVisibility);
         const [announcement, setAnnouncement] = useState("");
+        const [drillModal, setDrillModal] = useState(null);
+        // drillModal shape: { loading, rows, page, totalRows, path, sortCol, sortDir, filterText } | null
         const tableRef = useRef(null);
 
     // Reset Effect
@@ -2747,6 +2751,36 @@ export default function DashTanstackPivot(props) {
         };
     };
 
+    const fetchDrillData = useCallback(async (rowPath, page = 0, sortCol = null, sortDir = 'asc', filterText = '') => {
+        const params = new URLSearchParams({
+            table: tableName,
+            row_path: rowPath,
+            row_fields: rowFields.join(','),
+            page: String(page),
+            page_size: '500',
+        });
+        if (sortCol) { params.set('sort_col', sortCol); params.set('sort_dir', sortDir); }
+        if (filterText) params.set('filter', filterText);
+
+        setDrillModal(prev => ({ ...(prev || { path: rowPath, rows: [], page: 0, totalRows: 0, sortCol, sortDir, filterText }), loading: true }));
+        try {
+            const resp = await fetch(`${drillEndpoint}?${params.toString()}`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const json = await resp.json();
+            setDrillModal({ loading: false, path: rowPath, rows: json.rows || [], page: json.page || 0, totalRows: json.total_rows || 0, sortCol, sortDir, filterText });
+        } catch (err) {
+            console.error('Drill-through fetch failed:', err);
+            setDrillModal(null);
+        }
+    }, [tableName, rowFields, drillEndpoint]);
+
+    const handleCellDrillThrough = useCallback((row, colId) => {
+        if (!row || !row.original) return;
+        const rowPath = row.original._path;
+        if (!rowPath || rowPath === '__grand_total__') return;  // skip total rows
+        fetchDrillData(rowPath, 0, null, 'asc', '');
+    }, [fetchDrillData]);
+
     const exportPivot = useCallback(() => {
         const XLSX_LIMIT = 500000;
         const allRows = table.getRowModel().rows;  // full row model, not just virtual window
@@ -2847,13 +2881,16 @@ export default function DashTanstackPivot(props) {
                 cellContent = flexRender(cell.column.columnDef.cell, cell.getContext());
             }
     
+            const isDrillableCell = !isHierarchy && !(row.original && row.original._isTotal);
             return (
-                <div 
-                    key={cell.id} 
+                <div
+                    key={cell.id}
                     role="gridcell"
                     aria-selected={isSelected}
+                    data-drill={isDrillableCell ? "true" : undefined}
                     onMouseDown={(e) => handleCellMouseDown(e, virtualRowIndex, colIndex, row.id, cell.column.id, cell.getValue())}
                     onMouseEnter={() => handleCellMouseEnter(virtualRowIndex, colIndex)}
+                    onClick={isDrillableCell ? () => handleCellDrillThrough(row, col.id) : undefined}
                     style={{
                         ...styles.cell,
                         width: col.getSize(),
@@ -2868,7 +2905,8 @@ export default function DashTanstackPivot(props) {
                         ...condStyle,
                         ...(isFillSelected ? {boxShadow: `inset 0 0 0 1px ${theme.primary}`} : {}),
                         userSelect: 'none',
-                        position: stickyStyle && stickyStyle.position === 'sticky' ? 'sticky' : 'relative'
+                        position: stickyStyle && stickyStyle.position === 'sticky' ? 'sticky' : 'relative',
+                        cursor: isDrillableCell ? 'pointer' : undefined,
                     }}
                     onContextMenu={e => handleContextMenu(e, cell.getValue(), cell.column.id, row)}
                 >
@@ -2891,7 +2929,7 @@ export default function DashTanstackPivot(props) {
                     )}
                 </div>
             );
-        }, [selectedCells, fillRange, theme, getStickyStyle, handleCellMouseDown, handleCellMouseEnter, handleContextMenu, handleFillMouseDown, isDarkTheme]);
+        }, [selectedCells, fillRange, theme, getStickyStyle, handleCellMouseDown, handleCellMouseEnter, handleContextMenu, handleFillMouseDown, isDarkTheme, handleCellDrillThrough]);
 
     // NEW: Render Header Cell for Split Sections
     // overrideWidth: when set, replaces the computed section width (used for partially-visible
@@ -4138,6 +4176,22 @@ export default function DashTanstackPivot(props) {
             </div>
             {contextMenu && <ContextMenu {...contextMenu} onClose={() => setContextMenu(null)} />}
             {notification && <Notification message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
+            <DrillThroughModal
+                drillState={drillModal}
+                onClose={() => setDrillModal(null)}
+                onPageChange={(newPage) => {
+                    if (!drillModal) return;
+                    fetchDrillData(drillModal.path, newPage, drillModal.sortCol, drillModal.sortDir, drillModal.filterText);
+                }}
+                onSort={(col, dir) => {
+                    if (!drillModal) return;
+                    fetchDrillData(drillModal.path, 0, col, dir, drillModal.filterText);
+                }}
+                onFilter={(text) => {
+                    if (!drillModal) return;
+                    fetchDrillData(drillModal.path, 0, drillModal.sortCol, drillModal.sortDir, text);
+                }}
+            />
         </div>
     );
 };
@@ -4167,6 +4221,7 @@ DashTanstackPivot.propTypes = {
     cellUpdates: PropTypes.arrayOf(PropTypes.object),
     rowMove: PropTypes.object,
     drillThrough: PropTypes.object,
+    drillEndpoint: PropTypes.string,
     conditionalFormatting: PropTypes.arrayOf(PropTypes.object),
     validationRules: PropTypes.object,
     columnPinning: PropTypes.shape({
