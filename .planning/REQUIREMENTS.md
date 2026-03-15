@@ -72,6 +72,7 @@
 - [ ] **EXPORT-02**: Exported file preserves multi-level column headers
 - [ ] **EXPORT-03**: Exported file preserves row hierarchy (indentation or grouping)
 - [ ] **EXPORT-04**: Grand totals and subtotals are included in export
+- [ ] **EXPORT-05**: "Export" button downloads .xlsx when pivot row count is ≤ 500,000; downloads .csv above that threshold; button label and icon update to reflect the format that will be produced
 
 ### Column Display & UI States
 
@@ -187,6 +188,7 @@
 | EXPORT-02 | Phase 6 - Drill-Through & Excel Export | Pending |
 | EXPORT-03 | Phase 6 - Drill-Through & Excel Export | Pending |
 | EXPORT-04 | Phase 6 - Drill-Through & Excel Export | Pending |
+| EXPORT-05 | Phase 6 - Drill-Through & Excel Export | Pending |
 | UI-01 | Phase 7 - Column Display & UI States | Pending |
 | UI-02 | Phase 7 - Column Display & UI States | Pending |
 | UI-03 | Phase 7 - Column Display & UI States | Pending |
@@ -213,10 +215,10 @@
 | CI-03 | Phase 9 - Packaging, Docs & CI/CD | Pending |
 
 **Coverage:**
-- v1 requirements: 57 total (50 original + DRILL-06 + UI-01 through UI-06)
-- Mapped to phases: 57
+- v1 requirements: 58 total (50 original + DRILL-06 + UI-01 through UI-06 + EXPORT-05)
+- Mapped to phases: 58
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-13*
-*Last updated: 2026-03-14 — added DRILL-06 (REST endpoint), UI-01–UI-06 (Phase 7), renumbered Code Quality → Phase 8, Packaging → Phase 9*
+*Last updated: 2026-03-15 — added EXPORT-05 (xlsx/csv 500k threshold), added DRILL-06 (REST endpoint), UI-01–UI-06 (Phase 7), renumbered Code Quality → Phase 8, Packaging → Phase 9*
