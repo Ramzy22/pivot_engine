@@ -2,15 +2,28 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Ready for execution
-stopped_at: "Completed 06-drill-through-excel-export-04-PLAN.md"
-last_updated: "2026-03-15T17:50:00Z"
+status: unknown
+last_updated: "2026-03-15T18:38:39.313Z"
+progress:
+  total_phases: 9
+  completed_phases: 8
+  total_plans: 30
+  completed_plans: 28
+---
+
+﻿---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: Ready to execute
+stopped_at: Completed 07-column-display-ui-states-01-PLAN.md
+last_updated: "2026-03-15T18:29:46.326Z"
 last_activity: 2026-03-14 - Phase 05 plan 03 completed; sidebar and header filter popovers now share anchor geometry and clamp within the viewport
 progress:
   total_phases: 11
   completed_phases: 8
-  total_plans: 27
-  completed_plans: 27
+  total_plans: 30
+  completed_plans: 28
   percent: 96
 ---
 
@@ -21,16 +34,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-13)
 
 **Core value:** A Python developer adds an enterprise-grade pivot table to any Dash app in under 10 lines of code - no JS knowledge, no database config, no performance tuning required.
-**Current focus:** Phase 5 - Field Zone UI
+**Current focus:** Phase 07 - Column Display UI States
 
 ## Current Position
 
-Phase: 5 of 11 (Field Zone UI)
-Plan: 4 of 4 in current phase
+Current Phase: 07-column-display-ui-states
+Current Plan: 2
+Total Plans in Phase: 3
 Status: Ready for execution
-Last activity: 2026-03-14 - Phase 05 plan 03 completed; sidebar and header filter popovers now share anchor geometry and clamp within the viewport
+Last Activity: 2026-03-15
 
-Progress: [██████████] 96%
+Progress: [█████████░] 93%
 
 ## Performance Metrics
 
@@ -78,6 +92,7 @@ Progress: [██████████] 96%
 | Phase 06-drill-through-excel-export P02 | 6 | 2 tasks | 4 files |
 | Phase 06-drill-through-excel-export P03 | 15 | 2 tasks | 2 files |
 | Phase 06-drill-through-excel-export P04 | 45 | 3 tasks | 4 files |
+| Phase 07-column-display-ui-states P01 | 2 min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -110,15 +125,15 @@ Recent decisions affecting current work:
 - [Phase 03-virtual-scroll-ui-bugs]: expand-all optimized hierarchy cache is now scoped to true expand-all requests only
 - [Phase 03-virtual-scroll-ui-bugs]: React server-side row caching now invalidates on request-state changes including expansion and row-count shifts
 - [Phase 03-virtual-scroll-ui-bugs]: grouped-header sizing uses visible leaf columns per rendered section and context menus use measured viewport clamping
-- [Phase 03.1-debug-instrumentation-grand-total-fix]: Grand total dedup hardcodes 'region' field — Plan 02 must use pivot_spec.rows[0] to generalize
-- [Phase 03.1-debug-instrumentation-grand-total-fix]: asyncio_mode not set in pyproject.toml — use explicit @pytest.mark.asyncio decorators
-- [Phase 03.1-debug-instrumentation-grand-total-fix]: grand_total_emitted boolean flag replaces seen_grand_totals set in traverse() — generalizes via pivot_spec.rows[0]
+- [Phase 03.1-debug-instrumentation-grand-total-fix]: Grand total dedup hardcodes 'region' field â€” Plan 02 must use pivot_spec.rows[0] to generalize
+- [Phase 03.1-debug-instrumentation-grand-total-fix]: asyncio_mode not set in pyproject.toml â€” use explicit @pytest.mark.asyncio decorators
+- [Phase 03.1-debug-instrumentation-grand-total-fix]: grand_total_emitted boolean flag replaces seen_grand_totals set in traverse() â€” generalizes via pivot_spec.rows[0]
 - [Phase 03.1-debug-instrumentation-grand-total-fix]: _dedup_grand_total unconditional post-processing applied before all returns in handle_virtual_scroll_request
 
  - [Phase 03.2-test-harness-hardening]: dash_presentation.app now uses lazy `get_adapter()` bootstrap so test collection does not generate the 2M-row simulation dataset
  - [Phase 03.2-test-harness-hardening]: app import smoke coverage moved inside `test_dash_app_import_and_layout_valid()` to avoid module-scope side effects
  - [Phase 03.2-test-harness-hardening]: `update_pivot_table` keeps a single terminal main-path `except Exception`; inner drill-through and update handlers remain intact
-- [Phase 04-data-input-api]: Tests import from pivot_engine.pivot_engine.data_input — RED state is ModuleNotFoundError (expected)
+- [Phase 04-data-input-api]: Tests import from pivot_engine.pivot_engine.data_input â€” RED state is ModuleNotFoundError (expected)
 - [Phase 04-data-input-api]: test_connection_string uses a real temp DuckDB file so connection_string URI resolves correctly
 - [Phase 04-data-input-api]: Lazy optional-dep detection via module name prefix avoids top-level pandas/polars imports in data_input.py
 - [Phase 04-data-input-api]: DataInputError subclasses TypeError so existing isinstance guards remain compatible
@@ -130,15 +145,18 @@ Recent decisions affecting current work:
 - [Phase 05-field-zone-ui]: Covered FIELD-05 and FIELD-06 at the Python boundary by asserting serialized Dash component props rather than adding a separate frontend harness
 - [Phase 05-field-zone-ui]: Reused the existing filterAnchorEl for sidebar filter chips so header and sidebar popovers stay on one anchor path
 - [Phase 05-field-zone-ui]: FilterPopover now returns null until anchor geometry exists instead of rendering at the viewport origin
-- [Phase 06-drill-through-excel-export]: Flask TESTING flag set on app.server.config not app.config — Dash wrapper rejects unknown config keys
+- [Phase 06-drill-through-excel-export]: Flask TESTING flag set on app.server.config not app.config â€” Dash wrapper rejects unknown config keys
 - [Phase 06-drill-through-excel-export]: test_export.py tests Python controller layer directly via asyncio.run; JS SheetJS helpers are not pytest-testable
 - [Phase 06-drill-through-excel-export]: Sort test uses pytest.skip() not xfail so Plan 02 sort extension is clearly visible as future work
 - [Phase 06-drill-through-excel-export]: get_drill_through_data return type changed to Dict{rows, total_rows} so Flask endpoint has total_rows without a second query
-- [Phase 06-drill-through-excel-export]: Ibis schema.items() used instead of iter(schema) — iteration yields name strings not field objects with .type
-- [Phase 06-drill-through-excel-export]: table.getHeaderGroups() used for export header traversal — column definitions lack .parent backlinks set by TanStack
-- [Phase 06-drill-through-excel-export]: Non-breaking spaces used for xlsx hierarchy depth indentation — regular spaces are stripped by Excel on open
-- [Phase 06-drill-through-excel-export]: Self-contained React modal with browser fetch() — no Dash callbacks, no dcc components, drillEndpoint prop configures REST URL from Python
-- [Phase 06-drill-through-excel-export]: Drill-through triggered via right-click context menu only — left-click on cells removed to avoid conflicts with cell selection; page_size capped at 100
+- [Phase 06-drill-through-excel-export]: Ibis schema.items() used instead of iter(schema) â€” iteration yields name strings not field objects with .type
+- [Phase 06-drill-through-excel-export]: table.getHeaderGroups() used for export header traversal â€” column definitions lack .parent backlinks set by TanStack
+- [Phase 06-drill-through-excel-export]: Non-breaking spaces used for xlsx hierarchy depth indentation â€” regular spaces are stripped by Excel on open
+- [Phase 06-drill-through-excel-export]: Self-contained React modal with browser fetch() â€” no Dash callbacks, no dcc components, drillEndpoint prop configures REST URL from Python
+- [Phase 06-drill-through-excel-export]: Drill-through triggered via right-click context menu only â€” left-click on cells removed to avoid conflicts with cell selection; page_size capped at 100
+- [Phase 07-column-display-ui-states]: Promoted columnSizing to controlled state and included it in reset/sync/table-state paths.
+- [Phase 07-column-display-ui-states]: Persisted columnVisibility and columnSizing alongside pinning using component-scoped storage keys.
+- [Phase 07-column-display-ui-states]: Resize handle events stop propagation so drag interactions do not trigger header sorting.
 
 ### Pending Todos
 
@@ -150,6 +168,7 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-15T17:50:00Z
-Stopped at: Completed 06-drill-through-excel-export-04-PLAN.md (all tasks complete)
+Last session: 2026-03-15T18:32:08.535Z
+Stopped at: Completed 07-column-display-ui-states-01-PLAN.md
 Resume file: None
+

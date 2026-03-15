@@ -2975,13 +2975,21 @@ export default function DashTanstackPivot(props) {
             .filter(column => sectionLeafIds.has(column.id))
             .reduce((sum, column) => sum + column.getSize(), 0);
         const headerWidth = overrideWidth !== null ? overrideWidth : (sectionWidth || header.getSize());
+        const sortedActiveStyle = !isGroupHeader && isSorted ? {
+            background: theme.sortedHeaderBg || theme.select,
+            borderBottom: `1px solid ${theme.sortedHeaderBorder || theme.primary}`,
+            color: theme.sortedHeaderText || theme.primary,
+            fontWeight: 700
+        } : {};
+        const sortIconColor = isSorted ? (theme.sortedHeaderText || theme.primary) : theme.textSec;
 
         // Calculate sticky style for pinned headers using the hook
-        const stickyStyle = getHeaderStickyStyle(header, level, renderSection);
+        const stickyStyle = getHeaderStickyStyle(header, level, renderSection, sortedActiveStyle.background);
 
         return (
             <div key={header.id} style={{
                 ...styles.headerCell,
+                ...sortedActiveStyle,
                 width: headerWidth,
                 minWidth: headerWidth,
                 flexShrink: 0,
@@ -3054,9 +3062,13 @@ export default function DashTanstackPivot(props) {
                     </div>
                 )}
 
-                {!isGroupHeader && ({ asc: <Icons.SortAsc/>, desc: <Icons.SortDesc/> }[isSorted] || null)}
+                {!isGroupHeader && isSorted && (
+                    <span style={{display: 'inline-flex', alignItems: 'center', color: sortIconColor}}>
+                        {isSorted === 'asc' ? <Icons.SortAsc/> : <Icons.SortDesc/>}
+                    </span>
+                )}
                 {!isGroupHeader && isSorted && isMultiSort && (
-                    <span style={{fontSize: '9px', verticalAlign: 'super', marginLeft: '1px', opacity: 0.8, fontWeight: 700}}>{sortIndex + 1}</span>
+                    <span style={{fontSize: '9px', verticalAlign: 'super', marginLeft: '1px', opacity: 0.8, fontWeight: 700, color: sortIconColor}}>{sortIndex + 1}</span>
                 )}
 
                 <div

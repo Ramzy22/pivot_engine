@@ -78,8 +78,8 @@
 
 - [ ] **UI-01**: Pinned columns display a shadow or border separator and remain fixed during horizontal scroll
 - [ ] **UI-02**: Sorted columns show a visible ascending/descending indicator on the header; the active sort column is visually distinct
-- [ ] **UI-03**: Hidden columns can be toggled via the column visibility panel; visibility state persists across filter changes and data refreshes
-- [ ] **UI-04**: Column resize handles appear on header hover; resized widths persist during scroll and after data refresh
+- [x] **UI-03**: Hidden columns can be toggled via the column visibility panel; visibility state persists across filter changes and data refreshes
+- [x] **UI-04**: Column resize handles appear on header hover; resized widths persist during scroll and after data refresh
 - [ ] **UI-05**: Combined column states (pinned + sorted + resized simultaneously) display without visual conflict or layout breakage
 - [ ] **UI-06**: Default column widths, row heights, and header heights are visually balanced and consistent across all data densities
 
@@ -191,8 +191,8 @@
 | EXPORT-05 | Phase 6 - Drill-Through & Excel Export | Complete |
 | UI-01 | Phase 7 - Column Display & UI States | Pending |
 | UI-02 | Phase 7 - Column Display & UI States | Pending |
-| UI-03 | Phase 7 - Column Display & UI States | Pending |
-| UI-04 | Phase 7 - Column Display & UI States | Pending |
+| UI-03 | Phase 7 - Column Display & UI States | Complete |
+| UI-04 | Phase 7 - Column Display & UI States | Complete |
 | UI-05 | Phase 7 - Column Display & UI States | Pending |
 | UI-06 | Phase 7 - Column Display & UI States | Pending |
 | CODE-01 | Phase 8 - Code Quality Refactor | Pending |
