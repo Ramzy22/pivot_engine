@@ -59,8 +59,8 @@
 
 ### Drill-Through
 
-- [ ] **DRILL-01**: Clicking any aggregated cell triggers drill-through action
-- [ ] **DRILL-02**: Drill-through displays a modal showing the source rows for that cell
+- [x] **DRILL-01**: Clicking any aggregated cell triggers drill-through action
+- [x] **DRILL-02**: Drill-through displays a modal showing the source rows for that cell
 - [x] **DRILL-03**: Source rows are fetched via a dedicated REST endpoint (`/api/drill-through`) called directly from React — no Dash callback involved, no prop serialization limit
 - [x] **DRILL-04**: Drill-through modal paginates server-side (`?page=N&page_size=500`); full dataset is never sent to the browser
 - [x] **DRILL-05**: Drill-through modal supports server-side column sorting and text filter, both passed as query params
@@ -68,10 +68,10 @@
 
 ### Excel Export
 
-- [ ] **EXPORT-01**: "Export to Excel" button downloads the current pivot view as .xlsx
-- [ ] **EXPORT-02**: Exported file preserves multi-level column headers
-- [ ] **EXPORT-03**: Exported file preserves row hierarchy (indentation or grouping)
-- [ ] **EXPORT-04**: Grand totals and subtotals are included in export
+- [x] **EXPORT-01**: "Export to Excel" button downloads the current pivot view as .xlsx
+- [x] **EXPORT-02**: Exported file preserves multi-level column headers
+- [x] **EXPORT-03**: Exported file preserves row hierarchy (indentation or grouping)
+- [x] **EXPORT-04**: Grand totals and subtotals are included in export
 - [x] **EXPORT-05**: "Export" button downloads .xlsx when pivot row count is ≤ 500,000; downloads .csv above that threshold; button label and icon update to reflect the format that will be produced
 
 ### Column Display & UI States
@@ -178,16 +178,16 @@
 | FIELD-04 | Phase 5 - Field Zone UI | Complete |
 | FIELD-05 | Phase 5 - Field Zone UI | Complete |
 | FIELD-06 | Phase 5 - Field Zone UI | Complete |
-| DRILL-01 | Phase 6 - Drill-Through & Excel Export | Pending |
-| DRILL-02 | Phase 6 - Drill-Through & Excel Export | Pending |
+| DRILL-01 | Phase 6 - Drill-Through & Excel Export | Complete |
+| DRILL-02 | Phase 6 - Drill-Through & Excel Export | Complete |
 | DRILL-03 | Phase 6 - Drill-Through & Excel Export | Complete |
 | DRILL-04 | Phase 6 - Drill-Through & Excel Export | Complete |
 | DRILL-05 | Phase 6 - Drill-Through & Excel Export | Complete |
 | DRILL-06 | Phase 6 - Drill-Through & Excel Export | Complete |
-| EXPORT-01 | Phase 6 - Drill-Through & Excel Export | Pending |
-| EXPORT-02 | Phase 6 - Drill-Through & Excel Export | Pending |
-| EXPORT-03 | Phase 6 - Drill-Through & Excel Export | Pending |
-| EXPORT-04 | Phase 6 - Drill-Through & Excel Export | Pending |
+| EXPORT-01 | Phase 6 - Drill-Through & Excel Export | Complete |
+| EXPORT-02 | Phase 6 - Drill-Through & Excel Export | Complete |
+| EXPORT-03 | Phase 6 - Drill-Through & Excel Export | Complete |
+| EXPORT-04 | Phase 6 - Drill-Through & Excel Export | Complete |
 | EXPORT-05 | Phase 6 - Drill-Through & Excel Export | Complete |
 | UI-01 | Phase 7 - Column Display & UI States | Pending |
 | UI-02 | Phase 7 - Column Display & UI States | Pending |
