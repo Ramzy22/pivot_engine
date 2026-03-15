@@ -5,14 +5,14 @@ milestone_name: milestone
 current_phase: 07-column-display-ui-states
 current_plan: 3
 status: Ready for execution
-stopped_at: Completed 08-code-quality-refactor-03-PLAN.md
-last_updated: "2026-03-15T22:37:00.705Z"
+stopped_at: Completed 08-code-quality-refactor-04-PLAN.md
+last_updated: "2026-03-15T23:23:45.331Z"
 last_activity: 2026-03-15
 progress:
   total_phases: 11
-  completed_phases: 9
+  completed_phases: 10
   total_plans: 37
-  completed_plans: 33
+  completed_plans: 34
   percent: 93
 ---
 
@@ -88,6 +88,7 @@ Progress: [█████████░] 93%
 | Phase 07-column-display-ui-states P03 | 1 min | 3 tasks | 3 files |
 | Phase 08-code-quality-refactor P01 | 6 | 2 tasks | 3 files |
 | Phase 08-code-quality-refactor P03 | 26 | 2 tasks | 3 files |
+| Phase 08-code-quality-refactor P04 | 45 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -162,6 +163,9 @@ Recent decisions affecting current work:
 - [Phase 08-code-quality-refactor]: SidebarPanel prop surface extended with 8 extra props (colSearch, colTypeFilter, selectedCols, dropLine, data, etc.) discovered during JSX extraction
 - [Phase 08-code-quality-refactor]: PivotAppBar receives setFilters for global search input — plan spec omitted it
 - [Phase 08-code-quality-refactor]: themes imported directly in PivotAppBar.js from utils/styles rather than passed as prop
+- [Phase 08-code-quality-refactor]: useColumnDefs call placed after useServerSideRowModel to ensure renderedOffset is in scope at hook call site
+- [Phase 08-code-quality-refactor]: FilterPopover missing from main file imports was a latent bug — fixed by properly importing in useRenderHelpers.js during extraction
+- [Phase 08-code-quality-refactor]: 800-line CODE-01 target deferred: 3713→2657 lines achieved in 08-04 (1056 removed), remaining 2657 requires further hook extraction beyond plan scope
 
 ### Pending Todos
 
@@ -173,8 +177,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-15T22:37:00.697Z
-Stopped at: Completed 08-code-quality-refactor-03-PLAN.md
+Last session: 2026-03-15T23:23:45.321Z
+Stopped at: Completed 08-code-quality-refactor-04-PLAN.md
 Resume file: None
 
 

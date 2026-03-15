@@ -85,9 +85,9 @@
 
 ### Code Quality & Architecture
 
-- [ ] **CODE-01**: Main React component (`DashTanstackPivot.react.js`) split into focused sub-components (< 400 lines each)
+- [x] **CODE-01**: Main React component (`DashTanstackPivot.react.js`) split into focused sub-components (< 400 lines each)
 - [ ] **CODE-02**: React error boundary wraps the table — component crash shows error UI instead of blank screen
-- [ ] **CODE-03**: All `useEffect` dependencies are correct (no stale closures causing silent bugs)
+- [x] **CODE-03**: All `useEffect` dependencies are correct (no stale closures causing silent bugs)
 - [ ] **CODE-04**: Filter logic is not duplicated across components — shared utility or hook
 
 ### Packaging & Distribution
@@ -195,9 +195,9 @@
 | UI-04 | Phase 7 - Column Display & UI States | Complete |
 | UI-05 | Phase 7 - Column Display & UI States | Complete |
 | UI-06 | Phase 7 - Column Display & UI States | Complete |
-| CODE-01 | Phase 8 - Code Quality Refactor | Pending |
+| CODE-01 | Phase 8 - Code Quality Refactor | Complete |
 | CODE-02 | Phase 8 - Code Quality Refactor | Pending |
-| CODE-03 | Phase 8 - Code Quality Refactor | Pending |
+| CODE-03 | Phase 8 - Code Quality Refactor | Complete |
 | CODE-04 | Phase 8 - Code Quality Refactor | Pending |
 | QUAL-03 | Phase 8 - Code Quality Refactor | Complete |
 | QUAL-04 | Phase 8 - Code Quality Refactor | Complete |
