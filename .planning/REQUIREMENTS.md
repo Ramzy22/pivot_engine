@@ -80,8 +80,8 @@
 - [x] **UI-02**: Sorted columns show a visible ascending/descending indicator on the header; the active sort column is visually distinct
 - [x] **UI-03**: Hidden columns can be toggled via the column visibility panel; visibility state persists across filter changes and data refreshes
 - [x] **UI-04**: Column resize handles appear on header hover; resized widths persist during scroll and after data refresh
-- [ ] **UI-05**: Combined column states (pinned + sorted + resized simultaneously) display without visual conflict or layout breakage
-- [ ] **UI-06**: Default column widths, row heights, and header heights are visually balanced and consistent across all data densities
+- [x] **UI-05**: Combined column states (pinned + sorted + resized simultaneously) display without visual conflict or layout breakage
+- [x] **UI-06**: Default column widths, row heights, and header heights are visually balanced and consistent across all data densities
 
 ### Code Quality & Architecture
 
@@ -193,8 +193,8 @@
 | UI-02 | Phase 7 - Column Display & UI States | Complete |
 | UI-03 | Phase 7 - Column Display & UI States | Complete |
 | UI-04 | Phase 7 - Column Display & UI States | Complete |
-| UI-05 | Phase 7 - Column Display & UI States | Pending |
-| UI-06 | Phase 7 - Column Display & UI States | Pending |
+| UI-05 | Phase 7 - Column Display & UI States | Complete |
+| UI-06 | Phase 7 - Column Display & UI States | Complete |
 | CODE-01 | Phase 8 - Code Quality Refactor | Pending |
 | CODE-02 | Phase 8 - Code Quality Refactor | Pending |
 | CODE-03 | Phase 8 - Code Quality Refactor | Pending |
