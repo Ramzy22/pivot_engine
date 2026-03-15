@@ -2643,55 +2643,108 @@ export default function DashTanstackPivot(props) {
 
 
 
-    const buildExportAoa = (allRows, allColumns) => {
-        // Collect leaf columns in left-to-right order
-        const leafCols = [];
-        const collectLeaves = (col) => {
-            if (col.columns && col.columns.length > 0) {
-                col.columns.forEach(collectLeaves);
-            } else {
-                leafCols.push(col);
-            }
-        };
-        allColumns.forEach(collectLeaves);
+    const buildExportAoa = (allRows) => {
+        // Use table.getHeaderGroups() so we get the real multi-level header structure
+        // with correct parent/child relationships and colSpans set by TanStack.
+        const headerGroups = table.getHeaderGroups();
 
-        // Build parent header row (group header text, repeated per leaf span)
-        // and leaf header row
-        const parentHeaderRow = leafCols.map(c => c.parent ? (c.parent.header ?? c.parent.id ?? '') : (c.header ?? c.id ?? ''));
-        const leafHeaderRow   = leafCols.map(c => c.header ?? c.accessorKey ?? c.id ?? '');
+        // Identify leaf (data) columns from the last header group, excluding
+        // internal/UI-only columns that should not appear in the export.
+        const SKIP_COL_IDS = new Set(['__row_number__']);
+        const leafHeaders = (headerGroups[headerGroups.length - 1]?.headers ?? [])
+            .filter(h => !SKIP_COL_IDS.has(h.column.id) && !h.isPlaceholder);
+
+        const leafCount = leafHeaders.length;
+
+        // Build one AOA row per header group.
+        // For each header row, we fill a flat array of length leafCount.
+        // A header with colSpan > 1 occupies that many leaf slots; placeholders fill gaps.
+        const headerAoaRows = [];
+        const allMerges = [];
+
+        headerGroups.forEach((hg, rowIdx) => {
+            const aoaRow = new Array(leafCount).fill('');
+            let leafPos = 0;
+            hg.headers.forEach(h => {
+                if (SKIP_COL_IDS.has(h.column.id)) return;
+                const span = h.colSpan ?? 1;
+                if (!h.isPlaceholder) {
+                    // Resolve header text — prefer columnDef.header string, fall back to id
+                    const colDef = h.column.columnDef;
+                    let headerText = '';
+                    if (typeof colDef.header === 'string') {
+                        headerText = colDef.header;
+                    } else if (typeof h.column.id === 'string') {
+                        // Strip group_ prefix and internal path separators for cleaner output
+                        headerText = h.column.id
+                            .replace(/^group_/, '')
+                            .replace(/\|\|\|/g, ' > ');
+                    }
+                    aoaRow[leafPos] = headerText;
+                    if (span > 1 && rowIdx < headerGroups.length - 1) {
+                        // Merge across the span; row 0-indexed in the final aoa
+                        allMerges.push({ s: { r: rowIdx, c: leafPos }, e: { r: rowIdx, c: leafPos + span - 1 } });
+                    }
+                }
+                leafPos += span;
+            });
+            headerAoaRows.push(aoaRow);
+        });
+
+        // If there is only one header group and it looks identical to itself
+        // (no real parent grouping), just keep one header row to avoid duplication.
+        const dedupedHeaderRows = headerAoaRows.length > 1
+            ? headerAoaRows
+            : headerAoaRows;  // keep as-is for single group (flat table)
 
         // Build data rows — include ALL rows (totals + data rows)
+        // Track max content width per column for auto-sizing.
+        const colWidths = leafHeaders.map(h => {
+            const colDef = h.column.columnDef;
+            return typeof colDef.header === 'string' ? colDef.header.length : (h.column.id ?? '').length;
+        });
+
         const dataRows = allRows.map(r => {
-            return leafCols.map(c => {
-                if (c.id === 'hierarchy' || c.accessorKey === 'hierarchy' || !c.accessorKey) {
-                    // Hierarchy column: indent by depth
-                    const depth = r.depth ?? r.original?.depth ?? 0;
-                    const label = r.original?._id ?? '';
-                    return '  '.repeat(depth) + label;
+            return leafHeaders.map((h, ci) => {
+                const col = h.column;
+                const colId = col.id;
+                const colDef = col.columnDef;
+
+                let val;
+                if (colId === 'hierarchy') {
+                    // Hierarchy column: indent using spaces to reflect depth
+                    const depth = r.original?.depth ?? r.depth ?? 0;
+                    const label = r.original?._isTotal ? (r.original?._id ?? 'Total') : (r.original?._id ?? '');
+                    val = '\u00A0\u00A0'.repeat(depth) + label;  // non-breaking spaces for Excel visibility
+                } else if (typeof colDef.accessorFn === 'function') {
+                    // Use accessorFn to get the value (same as TanStack does internally)
+                    val = colDef.accessorFn(r.original, r.index);
+                } else if (colDef.accessorKey) {
+                    val = r.original?.[colDef.accessorKey];
+                } else {
+                    val = '';
                 }
-                const val = r.original?.[c.accessorKey];
-                return val !== undefined && val !== null ? val : '';
+
+                // Normalize: undefined/null → empty string; keep numbers as numbers
+                if (val === undefined || val === null) val = '';
+
+                // Track max width for column auto-sizing
+                const cellLen = String(val).length;
+                if (cellLen > colWidths[ci]) colWidths[ci] = cellLen;
+
+                return val;
             });
         });
 
-        // Compute !merges for parent header row
-        // Walk leafCols and group consecutive cols with the same parent header text
-        const merges = [];
-        let mergeStart = 0;
-        while (mergeStart < leafCols.length) {
-            const parentText = parentHeaderRow[mergeStart];
-            let mergeEnd = mergeStart;
-            while (mergeEnd + 1 < leafCols.length && parentHeaderRow[mergeEnd + 1] === parentText) {
-                mergeEnd++;
-            }
-            if (mergeEnd > mergeStart) {
-                // rows are 0-indexed; row 0 = parentHeaderRow
-                merges.push({ s: { r: 0, c: mergeStart }, e: { r: 0, c: mergeEnd } });
-            }
-            mergeStart = mergeEnd + 1;
-        }
+        // Build ws['!cols'] — cap at 60 chars to avoid overly wide columns
+        const wsCols = colWidths.map(w => ({ wch: Math.min(Math.max(w + 2, 8), 60) }));
 
-        return { aoa: [parentHeaderRow, leafHeaderRow, ...dataRows], merges };
+        return {
+            aoa: [...dedupedHeaderRows, ...dataRows],
+            merges: allMerges,
+            wsCols,
+            headerRowCount: dedupedHeaderRows.length,
+        };
     };
 
     const exportPivot = useCallback(() => {
@@ -2702,12 +2755,10 @@ export default function DashTanstackPivot(props) {
 
         if (isCSV) {
             // CSV path — flat, no merge support needed
-            const leafCols = [];
-            const collectLeaves = (col) => {
-                if (col.columns && col.columns.length > 0) col.columns.forEach(collectLeaves);
-                else leafCols.push(col);
-            };
-            columns.forEach(collectLeaves);
+            // Use TanStack visible leaf columns so we match what's shown on screen,
+            // and skip internal UI-only columns.
+            const SKIP_CSV = new Set(['__row_number__']);
+            const leafCols = table.getVisibleLeafColumns().filter(c => !SKIP_CSV.has(c.id));
 
             const escape = (v) => {
                 if (v == null) return '';
@@ -2715,23 +2766,30 @@ export default function DashTanstackPivot(props) {
                 return (s.includes(',') || s.includes('"') || s.includes('\n'))
                     ? `"${s.replace(/"/g, '""')}"` : s;
             };
-            const header = leafCols.map(c => escape(c.header ?? c.accessorKey ?? c.id ?? '')).join(',');
+            const header = leafCols.map(c => {
+                const h = c.columnDef?.header;
+                return escape(typeof h === 'string' ? h : (c.id ?? ''));
+            }).join(',');
             const lines = allRows.map(r =>
                 leafCols.map(c => {
-                    if (!c.accessorKey) {
-                        const depth = r.depth ?? r.original?.depth ?? 0;
+                    if (c.id === 'hierarchy') {
+                        const depth = r.original?.depth ?? r.depth ?? 0;
                         return escape('  '.repeat(depth) + (r.original?._id ?? ''));
                     }
-                    return escape(r.original?.[c.accessorKey] ?? '');
+                    const val = typeof c.columnDef?.accessorFn === 'function'
+                        ? c.columnDef.accessorFn(r.original, r.index)
+                        : (c.columnDef?.accessorKey ? r.original?.[c.columnDef.accessorKey] : '');
+                    return escape(val ?? '');
                 }).join(',')
             );
             const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv;charset=utf-8;' });
             saveAs(blob, 'pivot.csv');
         } else {
             // XLSX path — multi-level headers + hierarchy indent
-            const { aoa, merges } = buildExportAoa(allRows, columns);
+            const { aoa, merges, wsCols } = buildExportAoa(allRows);
             const ws = XLSX.utils.aoa_to_sheet(aoa);
             if (merges.length > 0) ws['!merges'] = merges;
+            if (wsCols && wsCols.length > 0) ws['!cols'] = wsCols;
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Pivot');
             const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
