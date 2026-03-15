@@ -6,12 +6,11 @@ import {
     getCoreRowModel,
     getExpandedRowModel,
     getGroupedRowModel,
-    flexRender,
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
-import { themes, getStyles, isDarkTheme, gridDimensionTokens, mergeStateStyles } from '../utils/styles';
+import { themes, getStyles, isDarkTheme, gridDimensionTokens } from '../utils/styles';
 import Icons from './Icons';
 const debugLog = process.env.NODE_ENV !== 'production'
     ? (...args) => console.log('[pivot-grid]', ...args)
@@ -20,14 +19,14 @@ import Notification from './Notification';
 import useStickyStyles from '../hooks/useStickyStyles';
 import { useServerSideRowModel } from '../hooks/useServerSideRowModel';
 import { useColumnVirtualizer } from '../hooks/useColumnVirtualizer';
-import SkeletonRow from './SkeletonRow';
-import { formatValue, getKey, getAllLeafIdsFromColumn, isGroupColumn, hasChildrenInZone } from '../utils/helpers';
+import { formatValue, getAllLeafIdsFromColumn, isGroupColumn } from '../utils/helpers';
 import ContextMenu from './Table/ContextMenu';
 import { PivotAppBar } from './PivotAppBar';
 import { SidebarPanel } from './Sidebar/SidebarPanel';
-import EditableCell from './Table/EditableCell';
-import StatusBar from './Table/StatusBar';
 import DrillThroughModal from './Table/DrillThroughModal';
+import { useColumnDefs } from '../hooks/useColumnDefs';
+import { useRenderHelpers } from '../hooks/useRenderHelpers';
+import { PivotTableBody } from './Table/PivotTableBody';
 import PivotErrorBoundary from './PivotErrorBoundary';
 import { usePersistence } from '../hooks/usePersistence';
 import { useFilteredData } from '../hooks/useFilteredData';
@@ -1327,425 +1326,6 @@ export default function DashTanstackPivot(props) {
         setFilterAnchorEl(null);
     };
 
-    const columns = useMemo(() => {
-        // Enhanced Sorting Logic (Tree-aware + Natural + Customization)
-        const customSortingFn = (rowA, rowB, columnId) => {
-            try {
-                // Safety check for loading rows (server-side)
-                if (!rowA.original || !rowB.original) return 0;
-
-                // 1. Special handling for grand total - it should always be at the end
-                // Check multiple ways to identify the grand total
-                const aIsGrandTotal = rowA.id === '__grand_total__' ||
-                                     rowA.original.__isGrandTotal__ ||
-                                     rowA.original._path === '__grand_total__' ||
-                                     rowA.original._id === 'Grand Total';
-                const bIsGrandTotal = rowB.id === '__grand_total__' ||
-                                     rowB.original.__isGrandTotal__ ||
-                                     rowB.original._path === '__grand_total__' ||
-                                     rowB.original._id === 'Grand Total';
-
-                // If one is grand total and the other is not, grand total goes last
-                if (aIsGrandTotal && !bIsGrandTotal) return 1;
-                if (!aIsGrandTotal && bIsGrandTotal) return -1;
-
-                // If both are grand totals, they are equal
-                if (aIsGrandTotal && bIsGrandTotal) return 0;
-
-                // 2. Regular totals (but not grand total) should come after non-totals
-                const aIsRegularTotal = (rowA.original && rowA.original._isTotal) && !aIsGrandTotal;
-                const bIsRegularTotal = (rowB.original && rowB.original._isTotal) && !bIsGrandTotal;
-
-                if (aIsRegularTotal && !bIsRegularTotal) return 1;
-                if (!aIsRegularTotal && bIsRegularTotal) return -1;
-
-                // Both are regular totals (not grand totals) - they can be equal for sorting purposes
-                if (aIsRegularTotal && bIsRegularTotal) return 0;
-
-                const valA = rowA.getValue(columnId);
-                const valB = rowB.getValue(columnId);
-
-                // 2. Column-Specific Customization
-                const colSortOptions = (sortOptions.columnOptions && sortOptions.columnOptions[columnId]) || {};
-                const isNatural = colSortOptions.naturalSort !== undefined ? colSortOptions.naturalSort : (sortOptions.naturalSort !== false);
-                const isCaseSensitive = colSortOptions.caseSensitive !== undefined ? colSortOptions.caseSensitive : sortOptions.caseSensitive;
-
-                if (isNatural) {
-                    const sensitivity = isCaseSensitive ? 'variant' : 'base';
-                    return new Intl.Collator(undefined, { numeric: true, sensitivity }).compare(String(valA || ''), String(valB || ''));
-                }
-
-                // Default Alphanumeric with configured sensitivity
-                const defaultSensitivity = isCaseSensitive ? 'variant' : 'base';
-                return String(valA || '').localeCompare(String(valB || ''), undefined, { numeric: true, sensitivity: defaultSensitivity });
-            } catch (err) {
-                console.error('Sorting error:', err);
-                return 0;
-            }
-        };
-
-        const sortingFn = serverSide ? 'auto' : customSortingFn;
-        const hierarchyCols = [];
-
-        if (showRowNumbers) {
-                hierarchyCols.push({
-                    id: '__row_number__',
-                    header: '#',
-                    size: defaultColumnWidths.rowNumber,
-                    enablePinning: false, // User Request: Cannot be changed
-                cell: ({ row }) => (
-                    <div
-                        style={{
-                            width: '100%',
-                            height: '100%',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            background: '#f5f5f5',
-                            cursor: 'pointer',
-                            fontSize: '11px',
-                            color: '#666',
-                            borderRight: `1px solid ${theme.border}`,
-                            userSelect: 'none'
-                        }}
-                        onMouseDown={(e) => {
-                            if (e.button !== 0) return;
-                            e.stopPropagation();
-                            setIsRowSelecting(true);
-                            setRowDragStart(row.index);
-                            handleRowSelect(row, e.shiftKey, e.ctrlKey || e.metaKey);
-                        }}
-                        onMouseEnter={() => {
-                            if (isRowSelecting && rowDragStart !== null) {
-                                handleRowRangeSelect(rowDragStart, row.index);
-                            }
-                        }}
-                    >
-                        {row.index + 1 + (serverSide ? (renderedOffset || 0) : 0)}
-                    </div>
-                )
-            });
-        }
-
-        if (layoutMode === 'hierarchy') {
-            if (rowFields.length > 0) {
-                hierarchyCols.push({
-                    id: 'hierarchy',
-                    accessorFn: row => row._id,
-                    header: rowFields.join(' > '),
-                    size: defaultColumnWidths.hierarchy,
-                    sortingFn, // Apply sort
-                    cell: ({ row }) => {
-                        const depth = (row.original.depth !== undefined) ? row.original.depth : (row.depth || 0);
-                        // Note: We removed selectedCells from this dependency to avoid unnecessary re-renders
-                        // isSelected is calculated dynamically in the renderCell function instead
-                        return (
-                            <div
-                                style={{
-                                    paddingLeft: `${depth * 24}px`,
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    width: '100%',
-                                    height: '100%'
-                                    // isSelected styling will be applied in renderCell
-                                }}
-                            >
-                                 {row.getCanExpand() && !(row.original && row.original._isTotal) ? (
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            debugLog('Toggling expansion (hierarchy) for', row.id);
-                                            row.getToggleExpandedHandler()(e);
-                                        }}
-                                        onMouseDown={(e) => e.stopPropagation()}
-                                        style={{border:'none',background:'none',cursor:'pointer',padding:0,marginRight:'6px',color:'#757575',display:'flex'}}
-                                    >
-                                        {row.getIsExpanded() ? <Icons.ChevronDown/> : <Icons.ChevronRight/>}
-                                        {pendingRowTransitions.has(row.id) && (
-                                            <span style={{fontSize: '10px', opacity: 0.75, marginLeft: '3px'}}>...</span>
-                                        )}
-                                    </button>
-                                ) : <span style={{width:'18px'}}/>}
-                                <span style={{ fontWeight: (row.original && row.original._isTotal) ? 700 : 400 }}>{row.original ? row.original._id : ''}</span>
-                            </div>
-                        );
-                    }
-                });
-            }
-        } else {
-            rowFields.forEach((field, i) => {
-                hierarchyCols.push({
-                    id: field,
-                    accessorKey: field,
-                    header: field,
-                    size: defaultColumnWidths.dimension,
-                    enablePinning: true,
-                    sortingFn,
-                    cell: ({ row, getValue }) => {
-                        const val = getValue();
-                        // Note: We removed selectedCells from this dependency to avoid unnecessary re-renders
-                        // isSelected is calculated dynamically in the renderCell function instead
-                        const depth = (row.original.depth !== undefined) ? row.original.depth : (row.depth || 0);
-
-                        // Outline: Show only if current column matches depth (step layout)
-                        // Tabular: Show if column is <= depth (repeat labels)
-                        let showValue = true;
-                        if (layoutMode === 'outline') {
-                            if (i !== depth) showValue = false;
-                        } else {
-                            // Tabular
-                            if (i > depth) showValue = false;
-                        }
-
-                        // Expander only on the active level column
-                        const showExpander = (i === depth) && row.getCanExpand() && !(row.original && row.original._isTotal);
-
-                        return (
-                            <div
-                                style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    width: '100%',
-                                    height: '100%',
-                                    fontWeight: (row.original && row.original._isTotal) ? 700 : 400
-                                    // isSelected styling will be applied in renderCell
-                                }}
-                            >
-                                {showExpander && (
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            debugLog('Toggling expansion (mode) for', row.id);
-                                            row.getToggleExpandedHandler()(e);
-                                        }}
-                                        onMouseDown={(e) => e.stopPropagation()}
-                                        style={{border:'none',background:'none',cursor:'pointer',padding:0,marginRight:'6px',color:'#757575',display:'flex'}}
-                                    >
-                                        {row.getIsExpanded() ? <Icons.ChevronDown/> : <Icons.ChevronRight/>}
-                                        {pendingRowTransitions.has(row.id) && (
-                                            <span style={{fontSize: '10px', opacity: 0.75, marginLeft: '3px'}}>...</span>
-                                        )}
-                                    </button>
-                                )}
-                                {showValue ? val : ''}
-                            </div>
-                        );
-                    }
-                });
-            });
-        }
-
-        let dataCols = [];
-        if (colFields.length === 0) {
-            dataCols = valConfigs.map(c => ({
-                id: getKey('', c.field, c.agg),
-                accessorFn: row => row[getKey('', c.field, c.agg)] ,
-                header: `${c.field} (${c.agg})`,
-                size: defaultColumnWidths.measure,
-                enablePinning: true,
-                sortingFn,
-                cell: info => (
-                    <div style={{width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'flex-end', paddingRight:'8px'}} onContextMenu={e => handleContextMenu(e, info.getValue(), info.column.id, info.row)}>
-                        {formatValue(info.getValue(), c.format)}
-                    </div>
-                )
-            }));
-        } else if (serverSide) {
-            const keys = new Set();
-            // Prefer explicit columns from backend callback (primary, always correct)
-            if (props.columns && props.columns.length > 0) {
-                props.columns.filter(c => c.id !== '__col_schema').forEach(c => keys.add(c.id));
-            // Fallback: use schema derived from row data (when props.columns not yet available)
-            } else if (cachedColSchema && cachedColSchema.columns && cachedColSchema.columns.length > 0) {
-                cachedColSchema.columns.forEach(c => keys.add(c.id));
-            } else if (filteredData.length > 0) {
-                filteredData.forEach(row => Object.keys(row).forEach(k => keys.add(k)));
-            }
-
-            if (keys.size > 0) {
-                const ignoreKeys = new Set(['_id', 'depth', '_isTotal', '_path', 'uuid', ...rowFields, ...colFields]);
-                
-                // Helper to determine if a column is relevant for the grid
-                const measureSuffixes = valConfigs.map(v => `_${v.field}_${v.agg}`);
-                const measureIds = new Set(valConfigs.map(v => getKey('', v.field, v.agg)));
-                
-                const flatCols = [];
-                Array.from(keys).sort().forEach(k => {
-                    if (ignoreKeys.has(k)) return;
-
-                    // Filter: Only show active measures, row totals, or pivoted measure columns
-                    let isRelevant = false;
-                    if (measureIds.has(k)) isRelevant = true;
-                    else if (k.startsWith('__RowTotal__')) isRelevant = true;
-                    else if (measureSuffixes.some(s => k.endsWith(s))) isRelevant = true;
-                    
-                    if (!isRelevant) return;
-
-                    flatCols.push({
-                        id: k,
-                        accessorFn: row => row[k],
-                        header: k,
-                        size: defaultColumnWidths.subtotal,
-                        sortingFn,
-                        cell: info => {
-                            const v = info.getValue();
-                            let fmt = null;
-                            if (valConfigs) {
-                                for (const c of valConfigs) { if (k.includes(c.field)) { fmt = c.format; break; } }
-                            }
-                            return (
-                                <div style={{width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'flex-end', paddingRight:'8px'}} onContextMenu={e => handleContextMenu(e, v, info.column.id, info.row)}>
-                                    {formatValue(v, fmt)}
-                                </div>
-                            );
-                        }
-                    });
-                });
-
-                const rowTotalCols = flatCols.filter(c => c.id.startsWith('__RowTotal__'));
-                const pivotCols = flatCols.filter(c => !c.id.startsWith('__RowTotal__'));
-
-                const buildRecursiveTree = (cols) => {
-                    const root = { columns: [] };
-                    cols.forEach(col => {
-                        const key = col.id;
-                        if (!key) return;
-                        let dimStr = key;
-                        let measureStr = "";
-                        let matchedConfig = null;
-                        if (valConfigs) {
-                            for (const config of valConfigs) {
-                                const suffix = `_${config.field}_${config.agg}`;
-                                if (key.toLowerCase().endsWith(suffix.toLowerCase())) {
-                                    matchedConfig = config;
-                                    measureStr = `${config.field} (${config.agg})`;
-                                    dimStr = key.substring(0, key.length - suffix.length);
-                                    break;
-                                }
-                            }
-                        }
-                        if (!matchedConfig) {
-                             const parts = key.split('_');
-                             if (parts.length > 1) {
-                                 dimStr = parts.slice(0, parts.length - 2).join('_');
-                                 measureStr = parts.slice(parts.length - 2).join(' ');
-                                 if (!dimStr) dimStr = "Total";
-                             }
-                        }
-                        const dimPath = dimStr ? dimStr.split('|') : [];
-                        let current = root;
-                        let pathKey = '';
-                        let parentCollapsed = false;
-                        for (let idx = 0; idx < dimPath.length; idx++) {
-                            const val = dimPath[idx].trim();
-                            if (idx > 0 && !isColExpanded(pathKey)) {
-                                parentCollapsed = true;
-                                break;
-                            }
-                            const currentPathKey = pathKey ? `${pathKey}|||${val}` : val;
-                            pathKey = currentPathKey;
-                            let node = current.columns.find(c => c.headerVal === val);
-                            if (!node) {
-                                node = {
-                                    id: `group_${currentPathKey}`,
-                                    headerVal: val,
-                                    header: (
-                                        <div style={{display:'flex', alignItems:'center', gap:4, width:'100%', overflow:'hidden'}}>
-                                            <span style={{flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={val}>{val}</span>
-                                            <span onClick={(e) => { e.stopPropagation(); toggleCol(currentPathKey); }} style={{cursor:'pointer', display:'flex', opacity:0.6, flexShrink:0}}>
-                                                {isColExpanded(currentPathKey) ? <Icons.ColCollapse/> : <Icons.ColExpand/>}
-                                            </span>
-                                        </div>
-                                    ),
-                                    columns: [],
-                                    enablePinning: true
-                                };
-                                current.columns.push(node);
-                            }
-                            current = node;
-                        }
-                        if (parentCollapsed) {
-                             if (current.columns.length === 0) {
-                                 current.columns.push({
-                                    id: pathKey + "_collapsed",
-                                    header: "...",
-                                    size: defaultColumnWidths.collapsedPlaceholder,
-                                    accessorFn: () => "",
-                                    cell: () => <div style={{color:'#999', textAlign:'center'}}>...</div>
-                                });
-                             }
-                             return;
-                        }
-                        if (isColExpanded(pathKey) || dimPath.length === 0) {
-                            const newCol = { ...col, header: measureStr || col.header, enablePinning: true };
-                            if (matchedConfig && matchedConfig.format) {
-                                newCol.cell = info => (
-                                    <EditableCell
-                                        getValue={info.getValue}
-                                        row={info.row}
-                                        column={info.column}
-                                        format={matchedConfig.format}
-                                        validationRules={validationRules}
-                                        setProps={setProps}
-                                        handleContextMenu={handleContextMenu}
-                                    />
-                                );
-                            }
-                            current.columns.push(newCol);
-                        } else if (current.columns.length === 0) {
-                             current.columns.push({
-                                id: pathKey + "_collapsed",
-                                header: "...",
-                                size: defaultColumnWidths.collapsedPlaceholder,
-                                accessorFn: () => "",
-                                cell: () => <div style={{color:'#999', textAlign:'center'}}>...</div>
-                            });
-                        }
-                    });
-                    return root.columns;
-                };
-                dataCols = buildRecursiveTree(pivotCols);
-
-                if (rowTotalCols.length > 0) {
-                    rowTotalCols.forEach(c => {
-                         if (c.header.startsWith('__RowTotal__')) {
-                             c.header = c.header.replace('__RowTotal__', 'Total ');
-                         }
-                                              c.cell = info => {
-                                                 const config = valConfigs.find(v => c.id.includes(v.field));
-                                                 return (
-                                                     <div style={{width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'flex-end', paddingRight:'8px', fontWeight:'bold'}} onContextMenu={e => handleContextMenu(e, info.getValue(), info.column.id, info.row)}>
-                                                         {formatValue(info.getValue(), config ? config.format : null)}
-                                                     </div>
-                                                 );
-                                              };                         dataCols.push(c);
-                    });
-                }
-            }
-        }
-        if (hierarchyCols.length === 0 && dataCols.length === 0) {
-             dataCols.push({ id: 'no_data', header: 'No Data', cell: () => 'No Data' });
-        }
-
-        const buildColumns = (cols) => {
-            return cols.map(col => {
-                if (col.columns) {
-                    return {
-                        ...col,
-                        columns: buildColumns(col.columns)
-                    };
-                }
-                return col;
-            });
-        };
-
-        return buildColumns([...hierarchyCols, ...dataCols]);
-    // filteredData is intentionally excluded: in server-side mode columns come from props.columns /
-    // cachedColSchema and filteredData changes on every viewport scroll, causing the entire column
-    // tree to rebuild. filteredData is used only as a last-resort fallback (client-side, no schema).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [rowFields, colFields, valConfigs, minMax, colorScale, colExpanded, serverSide, layoutMode, showRowNumbers, isRowSelecting, rowDragStart, props.columns, cachedColSchema]);
-
     useEffect(() => {
         const activeLeafIds = new Set();
         const stack = [...columns];
@@ -1854,6 +1434,39 @@ export default function DashTanstackPivot(props) {
         colEnd: colRequestEnd,
         needsColSchema: needsColSchema && serverSide,
     });
+
+    const columns = useColumnDefs({
+        sortOptions,
+        serverSide,
+        showRowNumbers,
+        layoutMode,
+        rowFields,
+        colFields,
+        valConfigs,
+        minMax,
+        colorScale,
+        colExpanded,
+        isRowSelecting,
+        rowDragStart,
+        props,
+        cachedColSchema,
+        filteredData,
+        // Render-time closures (stable refs or render-time reads)
+        theme,
+        defaultColumnWidths,
+        validationRules,
+        setProps,
+        handleContextMenu,
+        handleRowSelect,
+        handleRowRangeSelect,
+        setIsRowSelecting,
+        setRowDragStart,
+        renderedOffset,
+        isColExpanded,
+        toggleCol,
+        pendingRowTransitions,
+    });
+
 
     useEffect(() => {
         if (!serverSide || !structuralInFlight) return;
@@ -2797,315 +2410,48 @@ export default function DashTanstackPivot(props) {
         }
     }, [rows, columns, rowCount, table]);
 
-    // --- Helper to Render a single Cell with useCallback ---
-            const renderCell = useCallback((cell, virtualRowIndex, isVirtualRow = false) => {
-                if (!cell) return null;
-                
-                const row = cell.row;
-                const col = cell.column;
-                const colIndex = visibleLeafColIndexMap.get(col.id) ?? -1;
-                const isHierarchy = cell.column.id === 'hierarchy';
-                const isSelected = selectedCells[`${row.id}:${cell.column.id}`] !== undefined;
-                const isLastSelected = lastSelected && lastSelected.rowIndex === virtualRowIndex && lastSelected.colIndex === colIndex; // Approximate check            
-            // Check for fill handle selection
-            let isFillSelected = false;
-            if (fillRange && dragStart) {
-                 const rMin = Math.min(dragStart.rowIndex, fillRange.rEnd); // simplified for demo
-                 // Precise range check would require row index mapping
-                 if (virtualRowIndex >= fillRange.rStart && virtualRowIndex <= fillRange.rEnd && colIndex >= fillRange.cStart && colIndex <= fillRange.cEnd) {
-                     isFillSelected = true;
-                 }
-            }
-    
-            const rowBackground = (row.original && row.original._isTotal)
-                ? (isDarkTheme(theme) ? '#1a2e1a' : '#f0f7f0')
-                : (isDarkTheme(theme) ? '#212121' : '#fff');
-            const condStyle = getConditionalStyle(cell.column.id, cell.getValue());
-            const sortedBodyStyle = col.getIsSorted?.()
-                ? {
-                    background: theme.sortedHeaderBg || theme.select,
-                    color: theme.sortedHeaderText || theme.text
-                }
-                : {};
-            const stickyBaseStyle = mergeStateStyles(
-                { background: rowBackground },
-                condStyle,
-                sortedBodyStyle
-            );
-            const stickyStyle = getStickyStyle(cell.column, stickyBaseStyle.background);
-            const selectedOverlayStyle = isSelected
-                ? {
-                    background: theme.select,
-                    boxShadow: `inset 0 0 0 1px ${theme.primary}`
-                }
-                : {};
-            const focusOverlayStyle = isLastSelected
-                ? {
-                    outline: `1px solid ${theme.primary}`,
-                    outlineOffset: '-1px'
-                }
-                : {};
-            const fillOverlayStyle = isFillSelected
-                ? { boxShadow: `inset 0 0 0 1px ${theme.primary}` }
-                : {};
-            const cellStateStyle = mergeStateStyles(
-                stickyBaseStyle,
-                stickyStyle,
-                selectedOverlayStyle,
-                focusOverlayStyle,
-                fillOverlayStyle
-            );
-            
-            // Fix row number ordering
-            let cellContent;
-            if (cell.column.id === '__row_number__' && isVirtualRow) {
-                cellContent = (row.original && typeof row.original.__virtualIndex === 'number')
-                    ? row.original.__virtualIndex + 1
-                    : virtualRowIndex + 1;
-            } else {
-                cellContent = flexRender(cell.column.columnDef.cell, cell.getContext());
-            }
-    
-            return (
-                <div
-                    key={cell.id}
-                    role="gridcell"
-                    aria-selected={isSelected}
-                    onMouseDown={(e) => handleCellMouseDown(e, virtualRowIndex, colIndex, row.id, cell.column.id, cell.getValue())}
-                    onMouseEnter={() => handleCellMouseEnter(virtualRowIndex, colIndex)}
-                    style={{
-                        ...styles.cell,
-                        width: col.getSize(),
-                        height: '100%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: isHierarchy ? 'flex-start' : 'flex-end',
-                        fontWeight: (row.original && row.original._isTotal) ? 700 : ((isHierarchy && row.getIsGrouped()) ? 500 : 400),
-                        color: (row.original && row.original._isTotal) ? theme.text : undefined,
-                        ...cellStateStyle,
-                        userSelect: 'none',
-                        position: cellStateStyle.position === 'sticky' ? 'sticky' : 'relative',
-                    }}
-                    onContextMenu={e => handleContextMenu(e, cell.getValue(), cell.column.id, row)}
-                >
-                    {cellContent}
-                    {isLastSelected && Object.keys(selectedCells).length === 1 && isSelected && (
-                        <div 
-                            onMouseDown={handleFillMouseDown}
-                            style={{
-                                position: 'absolute',
-                                right: 0,
-                                bottom: 0,
-                                width: '8px',
-                                height: '8px',
-                                background: theme.primary,
-                                cursor: 'crosshair',
-                                zIndex: 100,
-                                border: `1px solid ${isDarkTheme(theme) ? '#000' : '#fff'}`,                            borderRadius: '1px'
-                            }}
-                        />
-                    )}
-                </div>
-            );
-        }, [selectedCells, fillRange, theme, getStickyStyle, handleCellMouseDown, handleCellMouseEnter, handleContextMenu, handleFillMouseDown, isDarkTheme]);
-
-    // NEW: Render Header Cell for Split Sections
-    // overrideWidth: when set, replaces the computed section width (used for partially-visible
-    // group headers during center-column virtualization so the width matches only the visible leaves).
-    const renderHeaderCell = (header, level, renderSection = 'center', overrideWidth = null) => {
-        const isGroupHeader = header.column.columns && header.column.columns.length > 0;
-        const isSorted = header.column.getIsSorted();
-        const sortIndex = header.column.getSortIndex();
-        const isMultiSort = table.getState().sorting.length > 1;
-        const isResizingColumn = header.column.getIsResizing();
-        const isHoveredHeader = hoveredHeaderId === header.column.id;
-        const isFocusedHeader = focusedHeaderId === header.column.id;
-        const isResizeHandleVisible = isResizingColumn || isHoveredHeader || isFocusedHeader;
-        const isPinned = header.column.getIsPinned();
-        const leafColumns = header.column.getLeafColumns ? header.column.getLeafColumns() : [header.column];
-        const sectionLeafIds = new Set(
-            (renderSection === 'left' ? leftCols : renderSection === 'right' ? rightCols : centerCols).map(column => column.id)
-        );
-        const sectionWidth = leafColumns
-            .filter(column => sectionLeafIds.has(column.id))
-            .reduce((sum, column) => sum + column.getSize(), 0);
-        const headerWidth = overrideWidth !== null ? overrideWidth : (sectionWidth || header.getSize());
-        const sortedHeaderStyle = !isGroupHeader && isSorted ? {
-            background: theme.sortedHeaderBg || theme.select,
-            borderBottom: `1px solid ${theme.sortedHeaderBorder || theme.primary}`,
-            color: theme.sortedHeaderText || theme.primary,
-            fontWeight: 700
-        } : {};
-        const isHeaderSelected = !isGroupHeader && selectedCols.has(header.column.id);
-        const interactionOverlayStyle = !isGroupHeader && (isFocusedHeader || isHeaderSelected || isResizingColumn)
-            ? { boxShadow: `inset 0 0 0 1px ${theme.primary}` }
-            : {};
-        const sortIconColor = isSorted ? (theme.sortedHeaderText || theme.primary) : theme.textSec;
-
-        // Calculate sticky style for pinned headers using the hook
-        const stickyStyle = getHeaderStickyStyle(
-            header,
-            level,
-            renderSection,
-            mergeStateStyles({ background: theme.headerBg }, sortedHeaderStyle).background
-        );
-        const headerStateStyle = mergeStateStyles(
-            styles.headerCell,
-            sortedHeaderStyle,
-            stickyStyle,
-            interactionOverlayStyle
-        );
-
-        return (
-            <div key={header.id} style={{
-                ...headerStateStyle,
-                width: headerWidth,
-                minWidth: headerWidth,
-                flexShrink: 0,
-                height: rowHeight,
-                cursor: 'pointer',
-                // Position is handled by getHeaderStickyStyle or parent container
-                position: headerStateStyle.position || 'relative'
-            }}
-            role="columnheader"
-            aria-sort={isSorted || 'none'}
-            aria-label={`${typeof header.column.columnDef.header === 'string' ? header.column.columnDef.header : header.column.id}. Click or press Alt+Up/Down to sort.`}
-            tabIndex={0}
-            onKeyDown={(e) => {
-                if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-                    e.preventDefault();
-                    header.column.toggleSorting(e.key === 'ArrowDown', e.shiftKey);
-                }
-            }}
-            draggable={!isGroupHeader && header.column.id !== '__row_number__'}
-            onDragStart={(e) => {
-                if (!isGroupHeader && header.column.id !== '__row_number__') {
-                    onDragStart(e, header.column.id, 'cols', -1);
-                }
-            }}
-            onContextMenu={(e) => handleHeaderContextMenu(e, header.column.id)}
-            onMouseEnter={() => setHoveredHeaderId(header.column.id)}
-            onMouseLeave={() => setHoveredHeaderId(current => (current === header.column.id ? null : current))}
-            onFocus={() => setFocusedHeaderId(header.column.id)}
-            onBlur={(e) => {
-                if (!e.currentTarget.contains(e.relatedTarget)) {
-                    setFocusedHeaderId(current => (current === header.column.id ? null : current));
-                }
-            }}
-            onClick={header.column.getToggleSortingHandler()}>
-                <div style={{
-                    display:'flex',
-                    alignItems:'center',
-                    gap: '4px',
-                    width: '100%',
-                    justifyContent: header.column.id === 'hierarchy' ? 'flex-start' : 'center',
-                    padding: '0 4px',
-                    overflow: 'hidden',
-                    minWidth: autoSizeBounds.minWidth
-                }}>
-                <span style={{
-                    overflow:'hidden',
-                    textOverflow:'ellipsis',
-                    whiteSpace:'nowrap',
-                    flex: 1,
-                    minWidth: 0
-                }}>
-                    {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                </span>
-
-                {!isGroupHeader && header.column.id !== 'hierarchy' && !header.isPlaceholder && (
-                    <div
-                        onClick={(e) => handleFilterClick(e, header.column.id)}
-                        style={{
-                            display:'flex',
-                            alignItems: 'center',
-                            padding: '2px',
-                            borderRadius: '4px',
-                            background: filters[header.column.id] ? theme.select : 'transparent',
-                            color: filters[header.column.id] ? theme.primary : 'inherit'
-                        }}
-                        aria-label="Filter"
-                    >
-                        <Icons.Filter/>
-                    </div>
-                )}
-
-                {!isGroupHeader && isSorted && (
-                    <span style={{display: 'inline-flex', alignItems: 'center', color: sortIconColor}}>
-                        {isSorted === 'asc' ? <Icons.SortAsc/> : <Icons.SortDesc/>}
-                    </span>
-                )}
-                {!isGroupHeader && isSorted && isMultiSort && (
-                    <span style={{fontSize: '9px', verticalAlign: 'super', marginLeft: '1px', opacity: 0.8, fontWeight: 700, color: sortIconColor}}>{sortIndex + 1}</span>
-                )}
-
-                <div
-                    onClick={(e) => { e.stopPropagation(); handleHeaderContextMenu(e, header.column.id); }}
-                    style={{
-                        display:'flex',
-                        alignItems: 'center',
-                        padding: '2px',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        color: theme.textSec,
-                        opacity: 0.6,
-                        hover: { opacity: 1, background: '#eee' }
-                    }}
-                    aria-label="More options"
-                >
-                    <Icons.MoreVert/>
-                </div>
-                </div>
-
-                {!isGroupHeader && activeFilterCol === header.column.id && (
-                    <FilterPopover
-                    column={header.column}
-                    anchorEl={filterAnchorEl}
-                    onClose={closeFilterPopover}
-                    onFilter={(type, val) => handleHeaderFilter(header.column.id, type, val)}
-                    currentFilter={filters[header.column.id]}
-                    options={activeFilterCol === header.column.id ? activeFilterOptions : []}
-                    theme={theme}
-                    />
-                )}
-                {!isGroupHeader && filters[header.column.id] && filters[header.column.id].conditions && (
-                <div style={{fontSize: '10px', color: theme.primary, paddingTop: '2px', textAlign: 'center'}}>
-                    {filters[header.column.id].conditions.map(c => `${c.type}: ${c.value}${c.caseSensitive ? ' (Match Case)' : ''}`).join(` ${filters[header.column.id].operator} `)}
-                </div>
-                )}
-
-                {header.column.getCanResize() && <div
-                    onMouseDown={(e) => {
-                        e.stopPropagation();
-                        header.getResizeHandler()(e);
-                    }}
-                    onTouchStart={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        header.getResizeHandler()(e);
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                    onDoubleClick={(e) => {
-                        e.stopPropagation();
-                        autoSizeColumn(header.column.id);
-                    }}
-                    style={{
-                        position: 'absolute',
-                        right: -4,
-                        top: 0,
-                        bottom: 0,
-                        width: 10,
-                        cursor: 'col-resize',
-                        touchAction: 'none',
-                        zIndex: 4,
-                        opacity: isResizeHandleVisible ? 1 : 0.14,
-                        transition: 'opacity 120ms ease',
-                        background: isResizeHandleVisible ? theme.primary : 'transparent'
-                    }}
-                />}
-            </div>
-        );
-    };
+    const { renderCell, renderHeaderCell } = useRenderHelpers({
+        // renderCell dependencies
+        selectedCells,
+        fillRange,
+        dragStart,
+        theme,
+        getStickyStyle,
+        isDarkTheme,
+        handleCellMouseDown,
+        handleCellMouseEnter,
+        handleContextMenu,
+        handleFillMouseDown,
+        visibleLeafColIndexMap,
+        lastSelected,
+        styles,
+        getConditionalStyle,
+        // renderHeaderCell dependencies (synchronous / render-time reads)
+        rowHeight,
+        table,
+        leftCols,
+        centerCols,
+        rightCols,
+        columnPinning,
+        sorting,
+        handleHeaderContextMenu,
+        autoSizeColumn,
+        autoSizeBounds,
+        hoveredHeaderId,
+        setHoveredHeaderId,
+        focusedHeaderId,
+        setFocusedHeaderId,
+        onDragStart,
+        handleFilterClick,
+        handleHeaderFilter,
+        activeFilterCol,
+        filterAnchorEl,
+        closeFilterPopover,
+        activeFilterOptions,
+        filters,
+        selectedCols,
+        getHeaderStickyStyle,
+    });
     
     const srOnly = {
         position: 'absolute',
@@ -3177,451 +2523,49 @@ export default function DashTanstackPivot(props) {
                         data={data}
                     />
                 )}
-                <div style={styles.main}>
-                    <div 
-                        ref={parentRef} 
-                        style={{...styles.scrollContainer, overflow: 'auto'}}
-                        onKeyDown={handleKeyDown}
-                        tabIndex={0}
-                        role="grid"
-                        aria-rowcount={rows.length}
-                        aria-colcount={visibleLeafColumns.length}
-                    >
-                         <div style={{width: `${totalLayoutWidth}px`, minWidth:'100%', height: `${rowVirtualizer.getTotalSize() + (effectiveTopRows.length + effectiveBottomRows.length) * rowHeight}px`, position: 'relative'}}>
-                             {/* Sticky Header */}
-                             <div style={{...styles.headerSticky, width: 'fit-content', display: 'flex'}} role="rowgroup">
-                                 {/* Left Section */}
-                                 <div style={{position: 'sticky', left: 0, zIndex: 4, background: theme.headerBg}}>
-                                     {table.getLeftHeaderGroups().map((group, level) => (
-                                             <div key={group.id} style={{display: 'flex', height: rowHeight, borderBottom: `1px solid ${theme.border}`}}>
-                                             {group.headers.map((header) => renderHeaderCell(header, level, 'left'))}
-                                         </div>
-                                     ))}
-                                     {showFloatingFilters && (
-                                         <div style={{display: 'flex', height: rowHeight, borderBottom: `1px solid ${theme.border}`, background: theme.background}}>
-                                             {leftCols.map((column, idx) => (
-                                                 <div key={column.id} style={{...styles.headerCell, width: column.getSize(), height: rowHeight, padding: '2px 4px', borderRight: idx === leftCols.length - 1 ? `1px solid ${theme.border}` : 'none'}}>
-                                                     {column.id !== 'hierarchy' && (
-                                                         <input
-                                                             style={{width: '100%', fontSize: '11px', padding: '2px 4px', border: `1px solid ${theme.border}`, borderRadius: '2px'}}
-                                                             placeholder="Filter..."
-                                                             value={(filters[column.id] && filters[column.id].conditions && filters[column.id].conditions[0]) ? filters[column.id].conditions[0].value : ''}
-                                                             onChange={e => handleHeaderFilter(column.id, {
-                                                                 operator: 'AND',
-                                                                 conditions: [{ type: 'contains', value: e.target.value, caseSensitive: false }]
-                                                             })}
-                                                             onClick={(e) => e.stopPropagation()}
-                                                         />
-                                                     )}
-                                                 </div>
-                                             ))}
-                                         </div>
-                                     )}
-                                 </div>
-
-                                 {/* Center Section */}
-                                 <div style={{position: 'relative'}}>
-                                     {table.getCenterHeaderGroups().map((group, level) => {
-                                         // Virtualize center headers: only render headers whose leaf
-                                         // columns overlap the visible virtual column range, plus spacers.
-                                         // centerColIndexMap and visibleLeafIndexSet are memoized above the render.
-                                         const visibleHeaders = [];
-                                         for (const header of group.headers) {
-                                             const leafCols = header.column.getLeafColumns
-                                                 ? header.column.getLeafColumns()
-                                                 : [header.column];
-                                             const centerLeafPairs = leafCols
-                                                 .map(lc => ({ col: lc, idx: centerColIndexMap.has(lc.id) ? centerColIndexMap.get(lc.id) : -1 }))
-                                                 .filter(p => p.idx >= 0);
-                                             if (centerLeafPairs.length === 0) continue;
-                                             const visiblePairs = centerLeafPairs.filter(p => visibleLeafIndexSet.has(p.idx));
-                                             if (visiblePairs.length === 0) continue;
-                                             const visWidth = visiblePairs.reduce((sum, p) => sum + p.col.getSize(), 0);
-                                             visibleHeaders.push({ header, visWidth });
-                                         }
-                                         return (
-                                             <div key={group.id} style={{display: 'flex', height: rowHeight, borderBottom: `1px solid ${theme.border}`}}>
-                                                 <div style={{ width: beforeWidth, flexShrink: 0 }} />
-                                                 {visibleHeaders.map(({ header, visWidth }) =>
-                                                     renderHeaderCell(header, level, 'center', visWidth)
-                                                 )}
-                                                 <div style={{ width: afterWidth, flexShrink: 0 }} />
-                                             </div>
-                                         );
-                                     })}
-                                     {showColumnLoadingSkeletons && (
-                                         <div
-                                             aria-hidden="true"
-                                             style={{
-                                                 position: 'absolute',
-                                                 top: 0,
-                                                 right: 0,
-                                                 height: rowHeight,
-                                                 display: 'flex',
-                                                 alignItems: 'center',
-                                                 justifyContent: 'flex-end',
-                                                 gap: '8px',
-                                                 padding: '0 8px',
-                                                 pointerEvents: 'none',
-                                                 zIndex: 9
-                                             }}
-                                         >
-                                             {Array.from({ length: pendingColumnSkeletonCount }).map((_, index) => (
-                                                 <div
-                                                     key={`col-header-skeleton-${index}`}
-                                                     style={{
-                                                         width: `${columnSkeletonWidth}px`,
-                                                         height: '60%',
-                                                         borderRadius: '8px',
-                                                         background: 'linear-gradient(90deg, #eef2fb 0%, #dbe8ff 45%, #eef2fb 100%)',
-                                                         backgroundSize: '220% 100%',
-                                                         border: `1px solid ${theme.border}`,
-                                                         animation: 'pivot-row-loader-enter 220ms ease-out, pivot-skeleton-shimmer 1.25s ease-in-out infinite'
-                                                     }}
-                                                 />
-                                             ))}
-                                         </div>
-                                     )}
-                                     {showFloatingFilters && (
-                                         <div style={{display: 'flex', height: rowHeight, borderBottom: `1px solid ${theme.border}`, background: theme.background}}>
-                                             <div style={{ width: beforeWidth, flexShrink: 0 }} />
-                                             {virtualCenterCols.map(virtualCol => {
-                                                 const column = centerCols[virtualCol.index];
-                                                 if (!column) return null;
-                                                 return (
-                                                     <div key={column.id} style={{...styles.headerCell, width: column.getSize(), height: rowHeight, padding: '2px 4px'}}>
-                                                         {column.id !== 'hierarchy' && (
-                                                             <input
-                                                                 style={{width: '100%', fontSize: '11px', padding: '2px 4px', border: `1px solid ${theme.border}`, borderRadius: '2px'}}
-                                                                 placeholder="Filter..."
-                                                                 value={(filters[column.id] && filters[column.id].conditions && filters[column.id].conditions[0]) ? filters[column.id].conditions[0].value : ''}
-                                                                 onChange={e => handleHeaderFilter(column.id, {
-                                                                     operator: 'AND',
-                                                                     conditions: [{ type: 'contains', value: e.target.value, caseSensitive: false }]
-                                                                 })}
-                                                                 onClick={(e) => e.stopPropagation()}
-                                                             />
-                                                         )}
-                                                     </div>
-                                                 );
-                                             })}
-                                             <div style={{ width: afterWidth, flexShrink: 0 }} />
-                                         </div>
-                                     )}
-                                 </div>
-
-                                 {/* Right Section */}
-                                 <div style={{position: 'sticky', right: 0, zIndex: 4, background: theme.headerBg}}>
-                                     {table.getRightHeaderGroups().map((group, level) => (
-                                         <div key={group.id} style={{display: 'flex', height: rowHeight, borderBottom: `1px solid ${theme.border}`}}>
-                                             {group.headers.map((header) => renderHeaderCell(header, level, 'right'))}
-                                         </div>
-                                     ))}
-                                     {showFloatingFilters && (
-                                         <div style={{display: 'flex', height: rowHeight, borderBottom: `1px solid ${theme.border}`, background: theme.background}}>
-                                             {rightCols.map((column, idx) => (
-                                                 <div key={column.id} style={{...styles.headerCell, width: column.getSize(), height: rowHeight, padding: '2px 4px', borderLeft: idx === 0 ? `1px solid ${theme.border}` : 'none'}}>
-                                                     {column.id !== 'hierarchy' && (
-                                                         <input
-                                                             style={{width: '100%', fontSize: '11px', padding: '2px 4px', border: `1px solid ${theme.border}`, borderRadius: '2px'}}
-                                                             placeholder="Filter..."
-                                                             value={(filters[column.id] && filters[column.id].conditions && filters[column.id].conditions[0]) ? filters[column.id].conditions[0].value : ''}
-                                                             onChange={e => handleHeaderFilter(column.id, {
-                                                                 operator: 'AND',
-                                                                 conditions: [{ type: 'contains', value: e.target.value, caseSensitive: false }]
-                                                             })}
-                                                             onClick={(e) => e.stopPropagation()}
-                                                         />
-                                                     )}
-                                                 </div>
-                                             ))}
-                                         </div>
-                                     )}
-                                 </div>
-                             </div>
-
-                             {/* Top Pinned Rows */}
-                             {effectiveTopRows.map((row, i) => {
-                                 const isExpandedRow = row.getIsExpanded();
-                                 const isLastPinnedTop = i === effectiveTopRows.length - 1;
-                                 const headerHeight = stickyHeaderHeight;
-                                 return (
-                                     <div
-                                        key={row.id}
-                                        role="row"
-                                        style={{
-                                         ...styles.row,
-                                         height: rowHeight,
-                                         width: `${totalLayoutWidth}px`,
-                                         position: 'sticky',
-                                         top: headerHeight + (i * rowHeight),
-                                         zIndex: 50, // Increased for top rows
-                                         background: (row.original && row.original._isTotal) ? (isDarkTheme(theme) ? '#1a2e1a' : '#f0f7f0') : theme.background,
-                                         borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
-                                         boxShadow: isLastPinnedTop ? `0 2px 4px -2px ${theme.border}80` : 'none'
-                                     }}>
-                                         {row.getLeftVisibleCells().map((cell) => renderCell(cell, i, false))}
-                                         <div style={{ width: beforeWidth, flexShrink: 0 }} />
-                                         {virtualCenterCols.map(virtualCol => {
-                                             const cell = row.getCenterVisibleCells()[virtualCol.index];
-                                             return renderCell(cell, i, false);
-                                         })}
-                                         <div style={{ width: afterWidth, flexShrink: 0 }} />
-                                         {row.getRightVisibleCells().map((cell) => renderCell(cell, i, false))}
-                                     </div>
-                                 )
-                             })}
-
-                             {showColumnLoadingSkeletons && (
-                                 <div
-                                     aria-hidden="true"
-                                     style={{
-                                         position: 'absolute',
-                                         top: `${bodyRowsTopOffset}px`,
-                                         right: 0,
-                                         height: `${Math.max(rowVirtualizer.getTotalSize(), rowHeight * 4)}px`,
-                                         display: 'flex',
-                                         gap: '8px',
-                                         padding: '0 8px',
-                                         pointerEvents: 'none',
-                                         zIndex: 3
-                                     }}
-                                 >
-                                     {Array.from({ length: pendingColumnSkeletonCount }).map((_, index) => (
-                                         <div
-                                             key={`col-body-skeleton-${index}`}
-                                             style={{
-                                                 width: `${columnSkeletonWidth}px`,
-                                                 height: '100%',
-                                                 borderRadius: '8px',
-                                                 background: 'linear-gradient(90deg, rgba(238,242,251,0.65) 0%, rgba(219,232,255,0.9) 45%, rgba(238,242,251,0.65) 100%)',
-                                                 backgroundSize: '220% 100%',
-                                                 border: `1px solid ${theme.border}55`,
-                                                 animation: 'pivot-row-loader-enter 220ms ease-out, pivot-skeleton-shimmer 1.25s ease-in-out infinite'
-                                             }}
-                                         />
-                                     ))}
-                                 </div>
-                             )}
-
-                             {/* Center Virtualized Rows */}
-                             {virtualRows.map(virtualRow => {
-                                 const topOffset = bodyRowsTopOffset;
-                                 
-                                 let row;
-                                 
-                                 if (serverSide) {
-                                     // 1. Fetch Data Directly from Cache (Source of Truth)
-                                     const cachedData = getRow(virtualRow.index);
-                                     
-                                     if (!cachedData) {
-                                         // Data not loaded yet -> Skeleton
-                                         return (
-                                             <div
-                                                key={`skeleton_${virtualRow.index}`}
-                                                style={{
-                                                 ...styles.row,
-                                                 height: virtualRow.size,
-                                                 top: `${virtualRow.start + topOffset}px`,
-                                                 width: `${totalLayoutWidth}px`,
-                                                 position: 'absolute',
-                                                 background: theme.background,
-                                                 borderBottom: `1px solid ${theme.border}`,
-                                                 display: 'flex', alignItems: 'center'
-                                             }}>
-                                                 <SkeletonRow style={{width: '100%'}} rowHeight={rowHeight} />
-                                             </div>
-                                         );
-                                     }
-
-                                     if (
-                                         serverSidePinsGrandTotal &&
-                                         (cachedData._isTotal || cachedData._path === '__grand_total__' || cachedData._id === 'Grand Total')
-                                     ) {
-                                         return null;
-                                     }
-
-                                     // 2. Resolve Row Object via ID (Decoupled from Index)
-                                     // We reconstruct the ID exactly as getRowId does, but using the global index directly.
-                                     // Global Index = virtualRow.index
-                                     let rowId;
-                                     if (cachedData._isTotal || cachedData._path === '__grand_total__' || cachedData._id === 'Grand Total') {
-                                         rowId = '__grand_total__';
-                                     } else {
-                                         rowId = cachedData._path || (cachedData.id ? cachedData.id : String(virtualRow.index));
-                                     }
-                                     
-                                     row = rowModelLookup.get(rowId);
-
-                                     // 3. Synchronization Check
-                                     // If table hasn't updated yet, table.getRow might return old data or undefined.
-                                     // We verify the row's data matches our cache.
-                                     const cachedPath = cachedData._isTotal ? '__grand_total__' : (cachedData._path || rowId);
-                                     const rowPath = row && row.original
-                                         ? (row.original._isTotal ? '__grand_total__' : (row.original._path || row.id))
-                                         : null;
-                                     if (row && rowPath !== cachedPath) {
-                                         row = undefined; // Stale row object
-                                     }
-                                 } else {
-                                     // Client-side mode: simple index access
-                                     row = effectiveCenterRows[virtualRow.index];
-                                 }
-
-                                 // 4. Fallback: If row object is missing (even if we had cache), show skeleton
-                                 if (!row || !row.original) {
-                                      return (
-                                         <div
-                                            key={`skeleton_wait_${virtualRow.index}`}
-                                            style={{
-                                             ...styles.row,
-                                             height: virtualRow.size,
-                                             top: `${virtualRow.start + topOffset}px`,
-                                             width: `${totalLayoutWidth}px`,
-                                             position: 'absolute',
-                                             background: (row.original && row.original._isTotal) ? (isDarkTheme(theme) ? '#1a2e1a' : '#f0f7f0') : theme.background,
-                                             borderBottom: `1px solid ${theme.border}`,
-                                             display: 'flex', alignItems: 'center'
-                                         }}>
-                                             <SkeletonRow style={{width: '100%'}} rowHeight={rowHeight} />
-                                         </div>
-                                     );
-                                 }
-
-                                 // 5. Feature: Hide Totals if requested (Server Side only workaround)
-                                 if (serverSide && !showColTotals && row.original._isTotal) {
-                                     return null; 
-                                 }
-
-                                  const isExpandedRow = row.getIsExpanded();
-                                  const pendingTransitionMode = pendingRowTransitions.get(row.id);
-                                  const showRowTransitionLoader = !!pendingTransitionMode;
-
-                                  // Stable key: use row path/id for loaded rows so expand/collapse
-                                  // does not remount rows that merely shifted index (AG Grid getRowId pattern).
-                                  const stableRowKey = serverSide
-                                      ? (row.id || String(virtualRow.index))
-                                      : String(virtualRow.index);
-
-                                  return (
-                                      <React.Fragment key={stableRowKey}>
-                                          <div
-                                             role="row"
-                                             aria-rowindex={virtualRow.index}
-                                             style={{
-                                              ...styles.row,
-                                              height: virtualRow.size,
-                                              top: `${virtualRow.start + topOffset}px`,
-                                              width: `${totalLayoutWidth}px`,
-                                              background: (row.original && row.original._isTotal) ? (isDarkTheme(theme) ? '#1a2e1a' : '#f0f7f0') : theme.background,
-                                              borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
-                                              transition: rowVirtualizer.isScrolling ? 'none' : 'background-color 0.2s'
-                                          }}>
-                                              {row.getLeftVisibleCells().map((cell) => renderCell(cell, virtualRow.index, true))}
-                                              <div style={{ width: beforeWidth, flexShrink: 0 }} />
-                                              {virtualCenterCols.map(virtualCol => {
-                                                  const cell = row.getCenterVisibleCells()[virtualCol.index];
-                                                  return renderCell(cell, virtualRow.index, true);
-                                              })}
-                                              <div style={{ width: afterWidth, flexShrink: 0 }} />
-                                              {row.getRightVisibleCells().map((cell) => renderCell(cell, virtualRow.index, true))}
-                                          </div>
-                                          {showRowTransitionLoader && (
-                                              <div
-                                                 role="row"
-                                                 aria-hidden="true"
-                                                 style={{
-                                                  ...styles.row,
-                                                  pointerEvents: 'none',
-                                                  height: rowHeight,
-                                                  top: `${virtualRow.start + topOffset + virtualRow.size}px`,
-                                                  width: `${totalLayoutWidth}px`,
-                                                  position: 'absolute',
-                                                  background: `linear-gradient(90deg, #f8fbff 0%, #eef5ff 50%, #f8fbff 100%)`,
-                                                  backgroundSize: '220% 100%',
-                                                  borderBottom: `1px dashed ${theme.border}`,
-                                                  display: 'flex',
-                                                  alignItems: 'center',
-                                                  justifyContent: 'flex-start',
-                                                  overflow: 'hidden',
-                                                  opacity: 0.95,
-                                                  zIndex: 18,
-                                                  boxShadow: `0 4px 12px -8px ${theme.border}`,
-                                                  animation: 'pivot-row-loader-enter 220ms ease-out, pivot-skeleton-shimmer 1.25s ease-in-out infinite'
-                                              }}>
-                                                  <SkeletonRow style={{width: '100%', opacity: 0.45}} rowHeight={rowHeight} />
-                                                  <div
-                                                     style={{
-                                                      position: 'absolute',
-                                                      paddingLeft: `${((row.original && typeof row.original.depth === 'number' ? row.original.depth : row.depth || 0) + 1) * 24 + 8}px`,
-                                                      fontSize: '12px',
-                                                      color: theme.textSec,
-                                                      display: 'flex',
-                                                      alignItems: 'center',
-                                                      gap: '8px',
-                                                      fontWeight: 500
-                                                  }}
-                                                  >
-                                                      <span
-                                                         aria-hidden="true"
-                                                         style={{
-                                                          width: '11px',
-                                                          height: '11px',
-                                                          border: `2px solid ${theme.primary}`,
-                                                          borderTopColor: 'transparent',
-                                                          borderRadius: '50%',
-                                                          animation: 'pivot-spinner-rotate 0.75s linear infinite'
-                                                      }}
-                                                      />
-                                                      {pendingTransitionMode === 'collapse' ? 'Collapsing...' : 'Loading children...'}
-                                                  </div>
-                                              </div>
-                                          )}
-                                      </React.Fragment>
-                                  )
-                              })}
-
-                             {/* Spacer: only needed when grand total is pinned to bottom.
-                                  Virtual rows use position:absolute (out of flow), so without this spacer
-                                  the sticky bottom rows would sit at the top of the container and never
-                                  reach their sticky activation point. */}
-                             {grandTotalPosition === 'bottom' && effectiveBottomRows.length > 0 && (
-                                 <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, flexShrink: 0 }} />
-                             )}
-                             {/* Bottom Pinned Rows */}
-                            {effectiveBottomRows.map((row, i) => {
-                                 const isExpandedRow = row.getIsExpanded();
-                                 const isFirstPinnedBottom = i === 0;
-                                 return (
-                                     <div
-                                        key={row.id}
-                                        role="row"
-                                        style={{
-                                         ...styles.row,
-                                         height: rowHeight,
-                                         width: `${totalLayoutWidth}px`,
-                                         position: 'sticky',
-                                         bottom: ((effectiveBottomRows.length - 1 - i) * rowHeight),
-                                         zIndex: 50, // Increased for bottom rows
-                                         background: (row.original && row.original._isTotal) ? (isDarkTheme(theme) ? '#1a2e1a' : '#f0f7f0') : theme.background,
-                                         borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
-                                         boxShadow: isFirstPinnedBottom ? `0 -2px 4px -2px ${theme.border}80` : 'none'
-                                     }}>
-                                         {row.getLeftVisibleCells().map((cell) => renderCell(cell, i, false))}
-                                         <div style={{ width: beforeWidth, flexShrink: 0 }} />
-                                         {virtualCenterCols.map(virtualCol => {
-                                             const cell = row.getCenterVisibleCells()[virtualCol.index];
-                                             return renderCell(cell, i, false);
-                                         })}
-                                         <div style={{ width: afterWidth, flexShrink: 0 }} />
-                                         {row.getRightVisibleCells().map((cell) => renderCell(cell, i, false))}
-                                     </div>
-                                 )
-                             })}
-                         </div>
-                    </div>
-                    <StatusBar selectedCells={selectedCells} rowCount={rowCount} visibleRowsCount={rows.length} theme={theme} />
-                </div>
+                <PivotTableBody
+                    parentRef={parentRef}
+                    handleKeyDown={handleKeyDown}
+                    rows={rows}
+                    visibleLeafColumns={visibleLeafColumns}
+                    totalLayoutWidth={totalLayoutWidth}
+                    beforeWidth={beforeWidth}
+                    afterWidth={afterWidth}
+                    bodyRowsTopOffset={bodyRowsTopOffset}
+                    stickyHeaderHeight={stickyHeaderHeight}
+                    effectiveTopRows={effectiveTopRows}
+                    effectiveBottomRows={effectiveBottomRows}
+                    effectiveCenterRows={effectiveCenterRows}
+                    virtualRows={virtualRows}
+                    virtualCenterCols={virtualCenterCols}
+                    rowVirtualizer={rowVirtualizer}
+                    rowModelLookup={rowModelLookup}
+                    getRow={getRow}
+                    serverSide={serverSide}
+                    serverSidePinsGrandTotal={serverSidePinsGrandTotal}
+                    pendingRowTransitions={pendingRowTransitions}
+                    table={table}
+                    leftCols={leftCols}
+                    centerCols={centerCols}
+                    rightCols={rightCols}
+                    centerColIndexMap={centerColIndexMap}
+                    visibleLeafIndexSet={visibleLeafIndexSet}
+                    rowHeight={rowHeight}
+                    showFloatingFilters={showFloatingFilters}
+                    showColTotals={showColTotals}
+                    grandTotalPosition={grandTotalPosition}
+                    showColumnLoadingSkeletons={showColumnLoadingSkeletons}
+                    pendingColumnSkeletonCount={pendingColumnSkeletonCount}
+                    columnSkeletonWidth={columnSkeletonWidth}
+                    theme={theme}
+                    styles={styles}
+                    renderCell={renderCell}
+                    renderHeaderCell={renderHeaderCell}
+                    filters={filters}
+                    handleHeaderFilter={handleHeaderFilter}
+                    selectedCells={selectedCells}
+                    rowCount={rowCount}
+                />
             </div>
             {contextMenu && <ContextMenu {...contextMenu} onClose={() => setContextMenu(null)} />}
             {notification && <Notification message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
