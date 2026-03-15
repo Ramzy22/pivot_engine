@@ -57,7 +57,7 @@ Each task was committed atomically:
 1. **Task 1: Consolidate pinned geometry and separator rendering into the sticky-style hook** - `04f3fb4` (feat)
 2. **Task 2: Add explicit sorted-active header styling while preserving existing sort behavior** - `70374da` (feat)
 
-**Plan metadata:** pending
+**Plan metadata:** `508173c`, `9083f33` (docs)
 
 ## Files Created/Modified
 - `dash_tanstack_pivot/src/lib/hooks/useStickyStyles.js` - Central sticky offsets, pinned edge detection, separator styles, and pinned z-index layering.
