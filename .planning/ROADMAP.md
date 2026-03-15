@@ -171,7 +171,12 @@ Plans:
   4. Column resize handles appear on header hover; resized widths persist during scroll and after data refresh
   5. Combined column states (e.g., a column that is simultaneously pinned, sorted, and resized) display without visual conflict or layout breakage
   6. Default column widths, row heights, and header heights are visually balanced and consistent across all data densities
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 09-01-PLAN.md — Canonical packaging metadata, redis extra, and install/import smoke gates
+- [ ] 09-02-PLAN.md — README + prop docs + runnable examples with explicit two-instance isolation contract
+- [ ] 09-03-PLAN.md — Push CI + release workflow with semver publish gates and multi-instance test enforcement
 
 ### Phase 8: Code Quality Refactor
 **Goal**: The frontend codebase is maintainable — no file exceeds ~400 lines, crashes show error UI instead of blank screens, and shared logic is not duplicated
@@ -220,5 +225,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 → 3.2 → 4 → 5 → 6
 | 6. Drill-Through & Excel Export | 3/4 | In Progress|  |
 | 7. Column Display & UI States | 3/3 | Complete | 2026-03-15 |
 | 8. Code Quality Refactor | 1/4 | In Progress|  |
-| 9. Packaging, Docs & CI/CD | 0/TBD | Not started | - |
-
+| 9. Packaging, Docs & CI/CD | 0/3 | Not started | - |
