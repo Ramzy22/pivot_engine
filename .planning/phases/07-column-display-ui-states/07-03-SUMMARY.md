@@ -31,7 +31,7 @@ patterns-established:
   - "Manual UI checkpoint artifacts are persisted as pass/fail scenario matrices."
   - "Combined column-state styling is composed through a fixed precedence order to avoid visual conflicts."
 requirements-completed: [UI-05, UI-06]
-duration: 1 min
+duration: 6 min
 completed: 2026-03-15
 ---
 
@@ -41,9 +41,9 @@ completed: 2026-03-15
 
 ## Performance
 
-- **Duration:** 1 min
+- **Duration:** 6 min
 - **Started:** 2026-03-15T19:06:25Z
-- **Completed:** 2026-03-15T19:08:20Z
+- **Completed:** 2026-03-15T19:13:22Z
 - **Tasks:** 3
 - **Files modified:** 3
 
