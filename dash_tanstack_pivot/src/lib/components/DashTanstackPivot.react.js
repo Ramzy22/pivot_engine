@@ -259,6 +259,8 @@ export default function DashTanstackPivot(props) {
     const [colSearch, setColSearch] = useState('');
     const [colTypeFilter, setColTypeFilter] = useState('all');
     const [selectedCols, setSelectedCols] = useState(new Set());
+    const [hoveredHeaderId, setHoveredHeaderId] = useState(null);
+    const [focusedHeaderId, setFocusedHeaderId] = useState(null);
     
     // Global Keyboard Shortcuts
     useEffect(() => {
@@ -2972,6 +2974,10 @@ export default function DashTanstackPivot(props) {
         const isSorted = header.column.getIsSorted();
         const sortIndex = header.column.getSortIndex();
         const isMultiSort = table.getState().sorting.length > 1;
+        const isResizingColumn = header.column.getIsResizing();
+        const isHoveredHeader = hoveredHeaderId === header.column.id;
+        const isFocusedHeader = focusedHeaderId === header.column.id;
+        const isResizeHandleVisible = isResizingColumn || isHoveredHeader || isFocusedHeader;
         const isPinned = header.column.getIsPinned();
         const leafColumns = header.column.getLeafColumns ? header.column.getLeafColumns() : [header.column];
         const sectionLeafIds = new Set(
@@ -3014,6 +3020,14 @@ export default function DashTanstackPivot(props) {
                 }
             }}
             onContextMenu={(e) => handleHeaderContextMenu(e, header.column.id)}
+            onMouseEnter={() => setHoveredHeaderId(header.column.id)}
+            onMouseLeave={() => setHoveredHeaderId(current => (current === header.column.id ? null : current))}
+            onFocus={() => setFocusedHeaderId(header.column.id)}
+            onBlur={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget)) {
+                    setFocusedHeaderId(current => (current === header.column.id ? null : current));
+                }
+            }}
             onClick={header.column.getToggleSortingHandler()}>
                 <div style={{
                     display:'flex',
@@ -3092,7 +3106,35 @@ export default function DashTanstackPivot(props) {
                 </div>
                 )}
 
-                {header.column.getCanResize() && <div onMouseDown={header.getResizeHandler()} onTouchStart={header.getResizeHandler()} onDoubleClick={() => autoSizeColumn(header.column.id)} style={{position:'absolute',right:0,top:0,bottom:0,width:4,cursor:'col-resize'}}/>}
+                {header.column.getCanResize() && <div
+                    onMouseDown={(e) => {
+                        e.stopPropagation();
+                        header.getResizeHandler()(e);
+                    }}
+                    onTouchStart={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        header.getResizeHandler()(e);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        autoSizeColumn(header.column.id);
+                    }}
+                    style={{
+                        position: 'absolute',
+                        right: -4,
+                        top: 0,
+                        bottom: 0,
+                        width: 10,
+                        cursor: 'col-resize',
+                        touchAction: 'none',
+                        zIndex: 4,
+                        opacity: isResizeHandleVisible ? 1 : 0.14,
+                        transition: 'opacity 120ms ease',
+                        background: isResizeHandleVisible ? theme.primary : 'transparent'
+                    }}
+                />}
             </div>
         );
     };
