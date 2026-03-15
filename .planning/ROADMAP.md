@@ -19,7 +19,7 @@ This is a brownfield project with a substantial existing codebase (~65 test file
 - [x] **Phase 5: Field Zone UI** - Complete drag-and-drop sidebar with four zones, aggregation selector, bidirectional Dash props (completed 2026-03-15)
 - [ ] **Phase 6: Drill-Through & Excel Export** - Cell drill-through modal (server-side via REST endpoint, not Dash callbacks) with pagination, and Excel .xlsx download
 - [ ] **Phase 7: Column Display & UI States** - Review and correct all column states (pinned, sorted, hidden, resized), their visual indicators, and UI defaults
-- [ ] **Phase 8: Code Quality Refactor** - Split 1500-line component, add error boundaries, fix stale closures and filter duplication
+- [ ] **Phase 8: Code Quality Refactor** - Split 4,338-line component, add error boundaries, fix stale closures and filter duplication
 - [ ] **Phase 9: Packaging, Docs & CI/CD** - PyPI publishing, README, examples, GitHub Actions
 
 ## Phase Details
@@ -183,7 +183,13 @@ Plans:
   3. Filter logic exists in exactly one place (shared hook or utility); no duplicate implementations across components
   4. The duplicate `run_pivot_arrow()` method in controller.py is removed with no regression in existing tests
   5. Column name sanitization in the backend uses Ibis parameter binding, eliminating SQL injection risk
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 08-01-PLAN.md — Remove duplicate run_pivot_arrow + parameterized UPDATE (QUAL-03, QUAL-04)
+- [ ] 08-02-PLAN.md — Create PivotErrorBoundary, usePersistence, useFilteredData hooks (CODE-02, CODE-03, CODE-04)
+- [ ] 08-03-PLAN.md — Extract PivotAppBar and SidebarPanel sub-components (CODE-01 partial)
+- [ ] 08-04-PLAN.md — Extract useColumnDefs, useRenderHelpers, PivotTableBody (CODE-01 completion)
 
 ### Phase 9: Packaging, Docs & CI/CD
 **Goal**: Any Python developer can `pip install dash-tanstack-pivot`, find clear documentation, and the project has automated testing and publishing
@@ -213,7 +219,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 → 3.2 → 4 → 5 → 6
 | 5. Field Zone UI | 4/4 | Complete | 2026-03-15 |
 | 6. Drill-Through & Excel Export | 3/4 | In Progress|  |
 | 7. Column Display & UI States | 2/3 | In Progress|  |
-| 8. Code Quality Refactor | 0/TBD | Not started | - |
+| 8. Code Quality Refactor | 0/4 | Not started | - |
 | 9. Packaging, Docs & CI/CD | 0/TBD | Not started | - |
 
 
