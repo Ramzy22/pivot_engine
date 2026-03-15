@@ -1,5 +1,5 @@
 // DashTanstackPivot - Enterprise Grade Pivot Table
-import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import {
     useReactTable,
@@ -13,6 +13,9 @@ import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import { themes, getStyles, isDarkTheme } from '../utils/styles';
 import Icons from './Icons';
+const debugLog = process.env.NODE_ENV !== 'production'
+    ? (...args) => console.log('[pivot-grid]', ...args)
+    : () => {};
 import Notification from './Notification';
 import useStickyStyles from '../hooks/useStickyStyles';
 import { useServerSideRowModel } from '../hooks/useServerSideRowModel';
@@ -26,6 +29,57 @@ import ColumnTreeItem from './Sidebar/ColumnTreeItem';
 import ContextMenu from './Table/ContextMenu';
 import EditableCell from './Table/EditableCell';
 import StatusBar from './Table/StatusBar';
+
+const getOrCreateSessionId = (componentId = 'pivot-grid') => {
+    if (typeof window === 'undefined') {
+        return `${componentId}-server-session`;
+    }
+
+    const storageKey = `${componentId}-client-session-id`;
+    try {
+        const fromStorage = window.sessionStorage.getItem(storageKey);
+        if (fromStorage) return fromStorage;
+    } catch (e) {
+        // no-op: storage may be blocked in some browser privacy modes
+    }
+
+    let generated = null;
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        generated = window.crypto.randomUUID();
+    } else {
+        generated = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+
+    try {
+        window.sessionStorage.setItem(storageKey, generated);
+    } catch (e) {
+        // no-op
+    }
+
+    return generated;
+};
+
+const createClientInstanceId = (componentId = 'pivot-grid') => {
+    if (typeof window !== 'undefined' && window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return `${componentId}-${window.crypto.randomUUID()}`;
+    }
+    return `${componentId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
+const loadingAnimationStyles = `
+@keyframes pivot-row-loader-enter {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pivot-skeleton-shimmer {
+    0% { background-position: 180% 0; }
+    100% { background-position: -180% 0; }
+}
+@keyframes pivot-spinner-rotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+`;
 
 export default function DashTanstackPivot(props) {
     const { 
@@ -58,8 +112,9 @@ export default function DashTanstackPivot(props) {
         reset,
         sortLock = false,
         availableFieldList,
+        table: tableName,
         dataOffset = 0,
-        dataVersion = 0
+        dataVersion = 0,
     } = props;
 
 
@@ -101,7 +156,7 @@ export default function DashTanstackPivot(props) {
 
         const availableFields = useMemo(() => {
             if (availableFieldList && availableFieldList.length > 0) return availableFieldList;
-            if (serverSide && props.columns) return props.columns.map(c => c.id || c);
+            if (serverSide && props.columns) return props.columns.filter(c => c.id !== '__col_schema').map(c => c.id || c);
 
             return data && data.length ? Object.keys(data[0]) : [];
 
@@ -545,6 +600,143 @@ export default function DashTanstackPivot(props) {
 
     const [dragItem, setDragItem] = useState(null);
     const [dropLine, setDropLine] = useState(null);
+    const sessionIdRef = useRef(getOrCreateSessionId(id || 'pivot-grid'));
+    const clientInstanceRef = useRef(createClientInstanceId(id || 'pivot-grid'));
+    const requestVersionRef = useRef(Number(dataVersion) || 0);
+    const latestDataVersionRef = useRef(Number(dataVersion) || 0);
+    const stateEpochRef = useRef(0);
+    const abortGenerationRef = useRef(0);
+    const structuralPendingVersionRef = useRef(null);
+    const latestViewportRef = useRef({ start: 0, end: 99, count: 100 });
+    const [stateEpoch, setStateEpoch] = useState(0);
+    const [cachedColSchema, setCachedColSchema] = useState(null);
+    const colSchemaEpochRef = useRef(-1);
+    const [visibleColRange, setVisibleColRange] = useState({ start: 0, end: 0 });
+    const colRequestStartRef = useRef(null);
+    const colRequestEndRef = useRef(null);
+    const needsColSchemaRef = useRef(true);
+    const [abortGeneration, setAbortGeneration] = useState(0);
+    const [structuralInFlight, setStructuralInFlight] = useState(false);
+    const [pendingRowTransitions, setPendingRowTransitions] = useState(() => new Map());
+    const [pendingColumnSkeletonCount, setPendingColumnSkeletonCount] = useState(0);
+
+    useEffect(() => {
+        const numericVersion = Number(dataVersion);
+        if (!Number.isFinite(numericVersion)) return;
+        latestDataVersionRef.current = numericVersion;
+        if (numericVersion > requestVersionRef.current) {
+            requestVersionRef.current = numericVersion;
+        }
+    }, [dataVersion]);
+
+    // Clear schema on structural change so we re-derive from fresh data
+    useEffect(() => {
+        if (!serverSide) return;
+        setCachedColSchema(null);
+    }, [stateEpoch, serverSide]);
+
+    // Extract authoritative col_schema embedded by the server as a sentinel entry in props.columns.
+    // This is more robust than inferring schema from row keys (handles windowed responses correctly).
+    useEffect(() => {
+        if (!serverSide || !props.columns) return;
+        const schemaEntry = props.columns.find(c => c.id === '__col_schema');
+        if (schemaEntry && schemaEntry.col_schema) {
+            setCachedColSchema(schemaEntry.col_schema);
+            colSchemaEpochRef.current = stateEpoch;
+        }
+    }, [serverSide, props.columns, stateEpoch]);
+
+    // Derive schema from row keys — only used in client-side mode.
+    // In server-side mode the authoritative schema always comes from the __col_schema sentinel
+    // embedded in props.columns by the server.  Allowing row-key inference in server-side mode
+    // risks schema drift on windowed/partial payloads (only the visible col slice is present).
+    useEffect(() => {
+        if (serverSide || cachedColSchema) return;
+        if (!filteredData || filteredData.length === 0) return;
+        const rowMetaKeys = new Set(['_id', '_path', '_isTotal', '_level', '_expanded',
+            '_parentPath', '_has_children', '_is_expanded', 'depth', 'uuid', 'subRows', '__virtualIndex']);
+        const ignoredIds = new Set([...rowFields, ...colFields, '_isTotal']);
+        const colIds = [];
+        const colIdSet = new Set();
+        for (const row of filteredData) {
+            if (!row) continue;
+            for (const key of Object.keys(row)) {
+                if (!colIdSet.has(key) && !rowMetaKeys.has(key) && !ignoredIds.has(key)) {
+                    colIds.push(key);
+                    colIdSet.add(key);
+                }
+            }
+        }
+        if (colIds.length > 0) {
+            setCachedColSchema({
+                total_center_cols: colIds.length,
+                columns: colIds.map((id, i) => ({ index: i, id, size: 140 }))
+            });
+            colSchemaEpochRef.current = stateEpoch;
+        }
+    }, [serverSide, filteredData, cachedColSchema, stateEpoch, rowFields, colFields]);
+
+    // Compute column request window and store in refs for use in field-zone effect
+    const COL_BLOCK_SIZE = 20;
+    const COL_OVERSCAN = 1; // extra col blocks to prefetch on each side
+
+    const needsColSchema = !cachedColSchema || colSchemaEpochRef.current !== stateEpoch;
+    const totalCenterCols = cachedColSchema ? cachedColSchema.total_center_cols : null;
+
+    // Only window columns once we have the schema and are in server-side mode.
+    // When needsColSchema is true we fetch all cols to get the schema.
+    // Guard uses totalCenterCols !== null (not visibleColRange.end > 0) so that windowing
+    // also activates when only column index 0 is visible (end === 0 would falsely disable it).
+    const colRequestStart = (serverSide && cachedColSchema && !needsColSchema && totalCenterCols !== null)
+        ? Math.max(0, (Math.floor(visibleColRange.start / COL_BLOCK_SIZE) - COL_OVERSCAN) * COL_BLOCK_SIZE)
+        : null;
+
+    const colRequestEnd = (serverSide && cachedColSchema && !needsColSchema && totalCenterCols !== null)
+        ? Math.min(totalCenterCols - 1,
+            (Math.floor(visibleColRange.end / COL_BLOCK_SIZE) + 1 + COL_OVERSCAN) * COL_BLOCK_SIZE - 1)
+        : null;
+
+    // Keep refs in sync for use in field-zone effect closures
+    colRequestStartRef.current = colRequestStart;
+    colRequestEndRef.current = colRequestEnd;
+    needsColSchemaRef.current = needsColSchema;
+
+    const beginStructuralTransaction = useCallback(() => {
+        stateEpochRef.current += 1;
+        abortGenerationRef.current += 1;
+        const baselineVersion = Math.max(requestVersionRef.current, latestDataVersionRef.current);
+        const nextVersion = baselineVersion + 1;
+        requestVersionRef.current = nextVersion;
+
+        setStateEpoch(stateEpochRef.current);
+        setAbortGeneration(abortGenerationRef.current);
+        setStructuralInFlight(true);
+        structuralPendingVersionRef.current = {
+            version: nextVersion,
+            startDataVersion: latestDataVersionRef.current
+        };
+
+        return {
+            stateEpoch: stateEpochRef.current,
+            abortGeneration: abortGenerationRef.current,
+            version: nextVersion
+        };
+    }, []);
+
+    // Lightweight expansion request: clears inflight (via abortGeneration bump) but
+    // does NOT change stateEpoch, so the existing cache stays valid and rows remain
+    // visible instead of flashing to skeletons.
+    const beginExpansionRequest = useCallback(() => {
+        abortGenerationRef.current += 1;
+        const newVersion = requestVersionRef.current + 1;
+        requestVersionRef.current = newVersion;
+        setAbortGeneration(abortGenerationRef.current);
+        return {
+            abortGeneration: abortGenerationRef.current,
+            stateEpoch: stateEpochRef.current,
+            version: newVersion
+        };
+    }, []);
 
     const setPropsRef = useRef(setProps);
     useEffect(() => {
@@ -570,20 +762,111 @@ export default function DashTanstackPivot(props) {
             rowFields, colFields, valConfigs, filters, sorting, expanded,
             showRowTotals, showColTotals, columnPinning, rowPinning, columnVisibility
         };
+        const colFieldsChanged = JSON.stringify(nextProps.colFields) !== JSON.stringify(lastPropsRef.current.colFields);
 
         const changed = Object.keys(nextProps).some(key => {
             const val = nextProps[key];
             const lastVal = lastPropsRef.current[key];
-            // Use JSON.stringify for comparison instead of isEqual function
             return JSON.stringify(val) !== JSON.stringify(lastVal);
         });
 
         if (setPropsRef.current && changed) {
-            console.log('[DEBUG] Sync to Dash Triggered', nextProps);
+            debugLog('Sync to Dash Triggered', nextProps);
+
+            // Detect expansion-only: only `expanded` changed, no structural fields.
+            // In that case we keep the existing cache (no stateEpoch bump) so rows
+            // remain visible. A loading row appears below the expanded row via
+            // pendingRowTransitions, and the viewport snaps in place.
+            const structuralKeys = ['rowFields', 'colFields', 'valConfigs', 'filters', 'sorting',
+                'showRowTotals', 'showColTotals', 'columnPinning', 'rowPinning', 'columnVisibility'];
+            const isExpansionOnly = serverSide && structuralKeys.every(
+                key => JSON.stringify(nextProps[key]) === JSON.stringify(lastPropsRef.current[key])
+            );
+
             lastPropsRef.current = nextProps;
-            setPropsRef.current(nextProps);
+
+            if (isExpansionOnly) {
+                // Cancel any pending scroll restore — the viewport stays exactly in place.
+                expansionScrollRestoreRef.current = null;
+                if (expansionScrollRestoreRafRef.current !== null && typeof cancelAnimationFrame === 'function') {
+                    cancelAnimationFrame(expansionScrollRestoreRafRef.current);
+                    expansionScrollRestoreRafRef.current = null;
+                }
+                const tx = beginExpansionRequest();
+                const viewportSnapshot = latestViewportRef.current || { start: 0, end: 99, count: 100 };
+
+                // Extend the row window to cover the block immediately after the anchor block.
+                // When expanding a row near the END of its block (e.g. row 95 in block 0),
+                // new children overflow into block N+1. Without this extension, those rows have
+                // no cache entry → they flash with skeleton loaders until a follow-up fetch lands.
+                // pendingExpansionRef.current is already set by onExpandedChange (same event,
+                // before this effect runs), so anchorBlock is available here.
+                const anchorBlockHint = pendingExpansionRef.current?.anchorBlock ?? -1;
+                const expansionBlockSize = 100; // must match blockSize prop
+                const extendedEnd = anchorBlockHint >= 0
+                    ? Math.max(viewportSnapshot.end, (anchorBlockHint + 2) * expansionBlockSize - 1)
+                    : viewportSnapshot.end;
+                const extendedCount = extendedEnd - viewportSnapshot.start + 1;
+
+                // Record the last block the expansion response will cover so the deferred
+                // effect knows to start soft-invalidating from the block AFTER it, rather
+                // than re-dirtying block N+1 that we just filled with fresh data.
+                if (pendingExpansionRef.current) {
+                    pendingExpansionRef.current.extendedToBlock =
+                        anchorBlockHint >= 0 ? anchorBlockHint + 1 : -1;
+                }
+
+                setPropsRef.current({
+                    ...nextProps,
+                    viewport: {
+                        table: tableName || undefined,
+                        start: viewportSnapshot.start,
+                        end: extendedEnd,
+                        count: extendedCount,
+                        version: tx.version,
+                        window_seq: tx.version,
+                        state_epoch: tx.stateEpoch,
+                        session_id: sessionIdRef.current,
+                        client_instance: clientInstanceRef.current,
+                        abort_generation: tx.abortGeneration,
+                        intent: 'expansion',
+                        col_start: colRequestStartRef.current !== null ? colRequestStartRef.current : undefined,
+                        col_end: colRequestEndRef.current !== null ? colRequestEndRef.current : undefined,
+                        needs_col_schema: needsColSchemaRef.current && serverSide || undefined
+                    }
+                });
+                return;
+            }
+
+            // Structural change: full transaction (new stateEpoch clears cache).
+            if (serverSide && colFieldsChanged) {
+                const prevCount = Array.isArray(lastPropsRef.current.colFields) ? lastPropsRef.current.colFields.length : 0;
+                const nextCount = Array.isArray(nextProps.colFields) ? nextProps.colFields.length : 0;
+                setPendingColumnSkeletonCount(Math.max(0, nextCount - prevCount));
+            } else {
+                setPendingColumnSkeletonCount(0);
+            }
+            const tx = beginStructuralTransaction();
+            const viewportSnapshot = latestViewportRef.current || { start: 0, end: 99, count: 100 };
+            setPropsRef.current({
+                ...nextProps,
+                viewport: {
+                    table: tableName || undefined,
+                    start: viewportSnapshot.start,
+                    end: viewportSnapshot.end,
+                    count: viewportSnapshot.count,
+                    version: tx.version,
+                    window_seq: tx.version,
+                    state_epoch: tx.stateEpoch,
+                    session_id: sessionIdRef.current,
+                    client_instance: clientInstanceRef.current,
+                    abort_generation: tx.abortGeneration,
+                    intent: 'structural',
+                    needs_col_schema: serverSide || undefined
+                }
+            });
         }
-    }, [rowFields, colFields, valConfigs, filters, sorting, expanded, showRowTotals, showColTotals, columnPinning, rowPinning, columnVisibility]); // Remove setProps from dependencies
+    }, [rowFields, colFields, valConfigs, filters, sorting, expanded, showRowTotals, showColTotals, columnPinning, rowPinning, columnVisibility, beginStructuralTransaction, beginExpansionRequest, serverSide, tableName]);
 
     useEffect(() => {
         const handleClick = () => setContextMenu(null);
@@ -752,7 +1035,7 @@ export default function DashTanstackPivot(props) {
             }
 
             if (changed) {
-                console.log('[DEBUG] Pinning Enforcement Triggered', nextLeft);
+                debugLog('Pinning Enforcement Triggered', nextLeft);
                 return { ...prev, left: nextLeft };
             }
             return prev;
@@ -871,7 +1154,7 @@ export default function DashTanstackPivot(props) {
         actions.push({
             label: 'Export to Excel',
             icon: <Icons.Export/>,
-            onClick: exportExcel
+            onClick: exportPivot
         });
 
         setContextMenu({
@@ -960,10 +1243,28 @@ export default function DashTanstackPivot(props) {
         }});
 
         actions.push('separator');
+        if (row && serverSide && row.getCanExpand() && row.original && row.original._path && rowFields.length > 1) {
+            actions.push({
+                label: 'Expand All Children',
+                icon: <Icons.ChevronDown/>,
+                onClick: () => {
+                    const rowPath = row.original._path;
+                    subtreeExpandRef.current = { path: rowPath, expandedPaths: new Set([rowPath]) };
+                    captureExpansionScrollPosition();
+                    clearCache();
+                    setExpanded(prev => {
+                        const base = (prev !== null && typeof prev === 'object') ? prev : {};
+                        return { ...base, [rowPath]: true };
+                    });
+                }
+            });
+        }
+
+        actions.push('separator');
         if (rowId) {
             const isPinnedTop = rowPinning.top.includes(rowId);
             const isPinnedBottom = rowPinning.bottom.includes(rowId);
-            
+
             actions.push({ label: 'Pin Row Top', onClick: () => handlePinRow(rowId, 'top') });
             actions.push({ label: 'Pin Row Bottom', onClick: () => handlePinRow(rowId, 'bottom') });
             if (isPinnedTop || isPinnedBottom) {
@@ -1221,13 +1522,16 @@ export default function DashTanstackPivot(props) {
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            console.log('[DEBUG] Toggling expansion (hierarchy) for', row.id);
+                                            debugLog('Toggling expansion (hierarchy) for', row.id);
                                             row.getToggleExpandedHandler()(e);
                                         }}
                                         onMouseDown={(e) => e.stopPropagation()}
                                         style={{border:'none',background:'none',cursor:'pointer',padding:0,marginRight:'6px',color:'#757575',display:'flex'}}
                                     >
                                         {row.getIsExpanded() ? <Icons.ChevronDown/> : <Icons.ChevronRight/>}
+                                        {pendingRowTransitions.has(row.id) && (
+                                            <span style={{fontSize: '10px', opacity: 0.75, marginLeft: '3px'}}>...</span>
+                                        )}
                                     </button>
                                 ) : <span style={{width:'18px'}}/>}
                                 <span style={{ fontWeight: (row.original && row.original._isTotal) ? 700 : 400 }}>{row.original ? row.original._id : ''}</span>
@@ -1279,13 +1583,16 @@ export default function DashTanstackPivot(props) {
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            console.log('[DEBUG] Toggling expansion (mode) for', row.id);
+                                            debugLog('Toggling expansion (mode) for', row.id);
                                             row.getToggleExpandedHandler()(e);
                                         }}
                                         onMouseDown={(e) => e.stopPropagation()}
                                         style={{border:'none',background:'none',cursor:'pointer',padding:0,marginRight:'6px',color:'#757575',display:'flex'}}
                                     >
                                         {row.getIsExpanded() ? <Icons.ChevronDown/> : <Icons.ChevronRight/>}
+                                        {pendingRowTransitions.has(row.id) && (
+                                            <span style={{fontSize: '10px', opacity: 0.75, marginLeft: '3px'}}>...</span>
+                                        )}
                                     </button>
                                 )}
                                 {showValue ? val : ''}
@@ -1313,9 +1620,12 @@ export default function DashTanstackPivot(props) {
             }));
         } else if (serverSide) {
             const keys = new Set();
-            // Prioritize explicit columns from backend if available (prevents sparse data issues)
+            // Prefer explicit columns from backend callback (primary, always correct)
             if (props.columns && props.columns.length > 0) {
-                props.columns.forEach(c => keys.add(c.id));
+                props.columns.filter(c => c.id !== '__col_schema').forEach(c => keys.add(c.id));
+            // Fallback: use schema derived from row data (when props.columns not yet available)
+            } else if (cachedColSchema && cachedColSchema.columns && cachedColSchema.columns.length > 0) {
+                cachedColSchema.columns.forEach(c => keys.add(c.id));
             } else if (filteredData.length > 0) {
                 filteredData.forEach(row => Object.keys(row).forEach(k => keys.add(k)));
             }
@@ -1472,7 +1782,7 @@ export default function DashTanstackPivot(props) {
                                               c.cell = info => {
                                                  const config = valConfigs.find(v => c.id.includes(v.field));
                                                  return (
-                                                     <div style={{width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'flex-end', paddingRight:'8px', fontWeight:'bold', background:'#fafafa'}} onContextMenu={e => handleContextMenu(e, info.getValue(), info.column.id, info.row)}>
+                                                     <div style={{width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'flex-end', paddingRight:'8px', fontWeight:'bold'}} onContextMenu={e => handleContextMenu(e, info.getValue(), info.column.id, info.row)}>
                                                          {formatValue(info.getValue(), config ? config.format : null)}
                                                      </div>
                                                  );
@@ -1498,33 +1808,60 @@ export default function DashTanstackPivot(props) {
         };
 
         return buildColumns([...hierarchyCols, ...dataCols]);
-    }, [filteredData, rowFields, colFields, valConfigs, minMax, colorScale, colExpanded, serverSide, layoutMode, showRowNumbers, isRowSelecting, rowDragStart, props.columns]); // Removed selectedCells to prevent infinite re-renders
+    // filteredData is intentionally excluded: in server-side mode columns come from props.columns /
+    // cachedColSchema and filteredData changes on every viewport scroll, causing the entire column
+    // tree to rebuild. filteredData is used only as a last-resort fallback (client-side, no schema).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [rowFields, colFields, valConfigs, minMax, colorScale, colExpanded, serverSide, layoutMode, showRowNumbers, isRowSelecting, rowDragStart, props.columns, cachedColSchema]);
 
     const parentRef = useRef(null);
+    const expansionScrollRestoreRef = useRef(null);
+    const expansionScrollRestoreRafRef = useRef(null);
+    // Tracks an in-progress "expand all children" operation.
+    // { path: string, expandedPaths: Set<string> }
+    // We use a ref (not state) to avoid dependency cycles in the watcher effect.
+    const subtreeExpandRef = useRef(null);
+    // After a single-row expansion, holds the anchor block index so we can
+    // invalidate subsequent blocks once the expansion response has landed.
+    // Doing it after the response avoids a concurrent viewport request that
+    // would race with (and stale-reject) the expansion request.
+    const pendingExpansionRef = useRef(null);
     const rowHeight = rowHeights[spacingMode] || 32;
 
+    // Cache key: only structural changes that require a full cache wipe.
+    // Expansion and rowCount are intentionally excluded — expansion uses targeted
+    // block invalidation (invalidateFromBlock) so rows before the toggled node
+    // stay cached, and rowCount is a derived result that changes with expansion.
     const serverSideCacheKey = useMemo(() => JSON.stringify({
         sorting,
         filters,
         rowFields,
         colFields,
         valConfigs,
-        expanded,
-        rowCount
-    }), [sorting, filters, rowFields, colFields, valConfigs, expanded, rowCount]);
+    }), [sorting, filters, rowFields, colFields, valConfigs]);
+    // Viewport reset key: only changes that semantically restart the user's view
+    // (new sort/filter/fields). rowCount is excluded because it changes when rows
+    // are expanded, which must NOT scroll back to the top.
     const serverSideViewportResetKey = useMemo(() => JSON.stringify({
         sorting,
         filters,
         rowFields,
         colFields,
         valConfigs,
-        rowCount
-    }), [sorting, filters, rowFields, colFields, valConfigs, rowCount]);
+    }), [sorting, filters, rowFields, colFields, valConfigs]);
 
     const serverSidePinsGrandTotal = serverSide && showColTotals;
     const effectiveRowCount = serverSidePinsGrandTotal && rowCount ? Math.max(rowCount - 1, 0) : rowCount;
 
-    const { rowVirtualizer, getRow, renderedData, renderedOffset, clearCache, grandTotalRow } = useServerSideRowModel({
+    const captureExpansionScrollPosition = useCallback(() => {
+        if (!serverSide || !parentRef.current) return;
+        expansionScrollRestoreRef.current = {
+            scrollTop: parentRef.current.scrollTop,
+            restorePassesRemaining: 3
+        };
+    }, [serverSide]);
+
+    const { rowVirtualizer, getRow, renderedData, renderedOffset, clearCache, invalidateFromBlock, softInvalidateFromBlock, grandTotalRow } = useServerSideRowModel({
         parentRef,
         serverSide,
         rowCount: effectiveRowCount,
@@ -1535,8 +1872,42 @@ export default function DashTanstackPivot(props) {
         setProps,
         blockSize: 100,
         cacheKey: serverSideCacheKey,
-        excludeGrandTotal: serverSidePinsGrandTotal
+        excludeGrandTotal: serverSidePinsGrandTotal,
+        stateEpoch,
+        sessionId: sessionIdRef.current,
+        clientInstance: clientInstanceRef.current,
+        abortGeneration,
+        structuralInFlight,
+        requestVersionRef,
+        tableName,
+        colStart: colRequestStart,
+        colEnd: colRequestEnd,
+        needsColSchema: needsColSchema && serverSide,
     });
+
+    useEffect(() => {
+        if (!serverSide || !structuralInFlight) return;
+        const pending = structuralPendingVersionRef.current;
+        const numericVersion = Number(dataVersion);
+        if (!pending || !Number.isFinite(numericVersion)) return;
+        if (numericVersion > pending.startDataVersion && numericVersion >= pending.version) {
+            setStructuralInFlight(false);
+            structuralPendingVersionRef.current = null;
+            setPendingRowTransitions(new Map());
+            setPendingColumnSkeletonCount(0);
+        }
+    }, [dataVersion, serverSide, structuralInFlight]);
+
+    useEffect(() => {
+        if (!serverSide || !structuralInFlight) return;
+        const timeoutId = setTimeout(() => {
+            setStructuralInFlight(false);
+            structuralPendingVersionRef.current = null;
+            setPendingRowTransitions(new Map());
+            setPendingColumnSkeletonCount(0);
+        }, 10000);
+        return () => clearTimeout(timeoutId);
+    }, [serverSide, structuralInFlight, stateEpoch]);
 
     const tableData = useMemo(() => {
         if (serverSide) {
@@ -1677,6 +2048,10 @@ export default function DashTanstackPivot(props) {
 
     const handleExpandAllRows = (shouldExpand) => {
         if (serverSide) {
+            captureExpansionScrollPosition();
+            // Expanding/collapsing ALL rows changes every row index — full cache wipe.
+            // (This path bypasses onExpandedChange so invalidateFromBlock won't run.)
+            clearCache();
             setExpanded(shouldExpand ? true : {});
             return;
         }
@@ -1738,11 +2113,58 @@ export default function DashTanstackPivot(props) {
         data: tableData,
         columns,
         state: tableState,
-        onSortingChange: (updater) => { console.log('[DEBUG] onSortingChange'); handleSortingChange(updater); },
-        onExpandedChange: (updater) => { console.log('[DEBUG] onExpandedChange'); setExpanded(updater); },
-        onColumnPinningChange: (updater) => { console.log('[DEBUG] onColumnPinningChange'); setColumnPinning(updater); },
-        onRowPinningChange: (updater) => { console.log('[DEBUG] onRowPinningChange'); setRowPinning(updater); },
-        onColumnVisibilityChange: (updater) => { console.log('[DEBUG] onColumnVisibilityChange'); setColumnVisibility(updater); },
+        onSortingChange: (updater) => { handleSortingChange(updater); },
+        onExpandedChange: (updater) => {
+            captureExpansionScrollPosition();
+            const newExpanded = typeof updater === 'function' ? updater(expanded) : updater;
+
+            if (serverSide) {
+                // Find which path was toggled so we know which block to defer-invalidate
+                // after the expansion response lands (see pendingExpansionRef effect).
+                // Value-diff: detect any key whose boolean value flipped (covers
+                // both key-add/remove AND false→true / true→false toggles).
+                const oldExp = expanded || {};
+                const newExp = newExpanded || {};
+                const allKeys = new Set([...Object.keys(oldExp), ...Object.keys(newExp)]);
+                const changedPath = [...allKeys].find(k => !!oldExp[k] !== !!newExp[k]);
+                if (changedPath) {
+                    const isNowExpanded = !!(newExpanded && newExpanded[changedPath]);
+                    setPendingRowTransitions(prev => {
+                        const next = new Map(prev);
+                        next.set(changedPath, isNowExpanded ? 'expand' : 'collapse');
+                        return next;
+                    });
+                }
+
+                // -1 signals "row not in viewport — do a full cache clear".
+                let anchorBlock = -1;
+                let expandedRowVirtualIndex = undefined;
+                if (changedPath) {
+                    const toggledRow = renderedData.find(r => r && r._path === changedPath);
+                    if (toggledRow && typeof toggledRow.__virtualIndex === 'number') {
+                        anchorBlock = Math.floor(toggledRow.__virtualIndex / 100);
+                        // Record the virtual index for viewport anchor preservation.
+                        // When rows are inserted/removed ABOVE the current scroll position
+                        // we adjust scrollTop so the same logical rows remain in view.
+                        expandedRowVirtualIndex = toggledRow.__virtualIndex;
+                    }
+                    // Do NOT fall back to the scroll position when the row is not in the
+                    // rendered viewport.  Using the viewport block as the anchor leaves all
+                    // blocks between the expanded row and the viewport with stale (shifted)
+                    // row indices.  A full cache clear (anchorBlock = -1) is safer.
+                }
+                // Don't invalidate now — doing so fires a concurrent viewport request
+                // that races with the expanded sync request and causes a stale rejection.
+                // Record the anchor so the deferred effect invalidates subsequent blocks
+                // once the expansion response has landed (dataVersion bump).
+                pendingExpansionRef.current = { anchorBlock, expandedRowVirtualIndex, oldRowCount: rowCount };
+            }
+
+            setExpanded(newExpanded);
+        },
+        onColumnPinningChange: (updater) => { debugLog('onColumnPinningChange'); setColumnPinning(updater); },
+        onRowPinningChange: (updater) => { debugLog('onRowPinningChange'); setRowPinning(updater); },
+        onColumnVisibilityChange: (updater) => { debugLog('onColumnVisibilityChange'); setColumnVisibility(updater); },
         getRowId,
         getCoreRowModel: getCoreRowModel(),
         getExpandedRowModel: getExpandedRowModel(),
@@ -1853,10 +2275,62 @@ export default function DashTanstackPivot(props) {
             bottomRows: []
         };
         // Expansion should still refetch server-side data, but it should not force the viewport back to the top.
+        expansionScrollRestoreRef.current = null;
+        if (expansionScrollRestoreRafRef.current !== null && typeof cancelAnimationFrame === 'function') {
+            cancelAnimationFrame(expansionScrollRestoreRafRef.current);
+            expansionScrollRestoreRafRef.current = null;
+        }
         if (parentRef.current) {
             parentRef.current.scrollTop = 0;
         }
     }, [serverSide, serverSideViewportResetKey, parentRef]);
+
+    useLayoutEffect(() => {
+        if (!serverSide || expansionScrollRestoreRef.current === null || !parentRef.current) return;
+        if (!hasRenderedData && centerRows.length === 0 && topRows.length === 0 && bottomRows.length === 0) return;
+
+        const restoreTarget = expansionScrollRestoreRef.current;
+        if (!restoreTarget) return;
+
+        const applyScrollRestore = () => {
+            if (!parentRef.current || !expansionScrollRestoreRef.current) return;
+
+            const nextTarget = expansionScrollRestoreRef.current;
+            const targetScrollTop = nextTarget.scrollTop;
+            if (rowVirtualizer.scrollToOffset) {
+                rowVirtualizer.scrollToOffset(targetScrollTop);
+            }
+            if (Math.abs(parentRef.current.scrollTop - targetScrollTop) > 1) {
+                parentRef.current.scrollTop = targetScrollTop;
+            }
+
+            if (nextTarget.restorePassesRemaining <= 1) {
+                expansionScrollRestoreRef.current = null;
+                expansionScrollRestoreRafRef.current = null;
+                return;
+            }
+
+            expansionScrollRestoreRef.current = {
+                ...nextTarget,
+                restorePassesRemaining: nextTarget.restorePassesRemaining - 1
+            };
+
+            if (typeof requestAnimationFrame === 'function') {
+                expansionScrollRestoreRafRef.current = requestAnimationFrame(applyScrollRestore);
+            } else {
+                applyScrollRestore();
+            }
+        };
+
+        applyScrollRestore();
+
+        return () => {
+            if (expansionScrollRestoreRafRef.current !== null && typeof cancelAnimationFrame === 'function') {
+                cancelAnimationFrame(expansionScrollRestoreRafRef.current);
+                expansionScrollRestoreRafRef.current = null;
+            }
+        };
+    }, [serverSide, hasRenderedData, centerRows.length, topRows.length, bottomRows.length, renderedOffset, dataVersion, rowVirtualizer]);
 
     const effectiveTopRows = (serverSide && hasRenderedData && topRows.length === 0 && centerRows.length === 0)
         ? lastStableRowModelRef.current.topRows
@@ -1877,29 +2351,116 @@ export default function DashTanstackPivot(props) {
         return lookup;
     }, [effectiveTopRows, effectiveCenterRows, effectiveBottomRows]);
 
+    // Progressive subtree expansion: each time the backend returns new data,
+    // scan it for descendants of the target path that still have children and
+    // haven't been expanded yet. Auto-expand them and let the cycle continue
+    // until every reachable descendant is expanded.
     useEffect(() => {
-        if (!serverSide) return;
-        console.log('[pivot-client-table]', {
-            renderedOffset,
-            renderedDataLength: renderedData.length,
-            rowCount,
-            centerRows: centerRows.length,
-            topRows: topRows.length,
-            bottomRows: bottomRows.length,
-            effectiveCenterRows: effectiveCenterRows.length,
-            grandTotalPresent: !!grandTotalRow,
-            centerSample: effectiveCenterRows.slice(0, 5).map(row => ({
-                id: row.id,
-                path: row.original ? row.original._path : null,
-                isTotal: !!(row.original && row.original._isTotal)
-            }))
+        if (!serverSide || !data || !subtreeExpandRef.current) return;
+        const { path, expandedPaths } = subtreeExpandRef.current;
+
+        const toExpand = data.filter(row => {
+            if (!row || !row._path || !row._has_children) return false;
+            const inSubtree = row._path === path || row._path.startsWith(path + '|||');
+            return inSubtree && !expandedPaths.has(row._path);
         });
-    }, [serverSide, renderedOffset, renderedData, rowCount, centerRows, topRows, bottomRows, effectiveCenterRows, grandTotalRow]);
+
+        if (toExpand.length === 0) {
+            subtreeExpandRef.current = null;
+            return;
+        }
+
+        toExpand.forEach(row => expandedPaths.add(row._path));
+
+        captureExpansionScrollPosition();
+        clearCache();
+        setExpanded(prev => {
+            const base = (prev !== null && typeof prev === 'object') ? prev : {};
+            const next = { ...base };
+            toExpand.forEach(row => { next[row._path] = true; });
+            return next;
+        });
+    }, [data, serverSide]); // intentionally omits captureExpansionScrollPosition/clearCache/setExpanded — stable refs
+
+    // Deferred block invalidation after single-row expansion.
+    // We wait for the expansion response to land (dataVersion bumps) before
+    // invalidating subsequent blocks. This ensures only ONE backend request fires
+    // (the expanded sync), with no concurrent viewport request to race against it.
+    // After the anchor block is updated with fresh data, blocks beyond it are
+    // deleted so they get re-fetched on next scroll (their row indices shifted).
+    useEffect(() => {
+        if (!serverSide || !pendingExpansionRef.current) return;
+        const { anchorBlock, expandedRowVirtualIndex, oldRowCount, extendedToBlock = -1 } = pendingExpansionRef.current;
+        pendingExpansionRef.current = null;
+        if (anchorBlock < 0) {
+            // The expanded row was not in the viewport when the user toggled it.
+            // We can't know which anchor block shifted, but a hard clear causes
+            // a full skeleton flash.  Soft-invalidate all blocks from 0 instead
+            // so existing rows stay visible (stale-while-revalidate) until fresh
+            // data lands (finding #6).
+            if (softInvalidateFromBlock) softInvalidateFromBlock(0);
+        } else {
+            // The expansion request was extended to cover through extendedToBlock
+            // (anchorBlock + 1 when the anchor is known).  Those blocks were filled
+            // with fresh data by the data-sync effect, so we must NOT re-dirty them.
+            // Start soft-invalidating from the first block BEYOND the fresh coverage.
+            const firstStaleBlock = extendedToBlock >= 0 ? extendedToBlock + 1 : anchorBlock + 1;
+            if (softInvalidateFromBlock) softInvalidateFromBlock(firstStaleBlock);
+        }
+        // Clear the transition loader now that the expansion response has landed.
+        setPendingRowTransitions(new Map());
+
+        // Viewport anchor preservation.
+        // When rows are inserted or removed ABOVE the current scroll position, the
+        // virtualizer re-layouts and the same pixel offset now shows a different
+        // logical row. Compensate by shifting scrollTop so that the user continues
+        // to see the same rows they were looking at before the toggle.
+        if (
+            parentRef.current &&
+            typeof expandedRowVirtualIndex === 'number' &&
+            typeof oldRowCount === 'number' &&
+            rowHeight > 0
+        ) {
+            const rowDelta = (rowCount || 0) - (oldRowCount || 0);
+            if (rowDelta !== 0) {
+                // Y position of the expanded/collapsed row (uniform row heights).
+                const expandedRowY = expandedRowVirtualIndex * rowHeight;
+                const currentScrollTop = parentRef.current.scrollTop;
+                // Only compensate when the anchor row is entirely ABOVE the viewport.
+                // If it is at or inside the viewport the inserted children appear
+                // naturally below it and no scroll adjustment is needed.
+                if (expandedRowY + rowHeight <= currentScrollTop) {
+                    const newScrollTop = Math.max(0, currentScrollTop + rowDelta * rowHeight);
+                    parentRef.current.scrollTop = newScrollTop;
+                    if (rowVirtualizer.scrollToOffset) {
+                        rowVirtualizer.scrollToOffset(newScrollTop);
+                    }
+                }
+            }
+        }
+    }, [dataVersion, serverSide, rowCount, rowHeight, parentRef, rowVirtualizer]); // fires when expansion response arrives
+
+    // Debug effect removed (finding #10 — hot-path logging).
 
     const visibleLeafColumns = table.getVisibleLeafColumns();
 
     // 1. Row Virtualizer (Managed by useServerSideRowModel)
     const virtualRows = rowVirtualizer.getVirtualItems();
+    const showColumnLoadingSkeletons = serverSide && structuralInFlight && pendingColumnSkeletonCount > 0;
+    const columnSkeletonWidth = 140;
+    const stickyHeaderHeight = (table.getHeaderGroups().length * rowHeight) + (showFloatingFilters ? rowHeight : 0);
+    const bodyRowsTopOffset = stickyHeaderHeight + (effectiveTopRows.length * rowHeight);
+
+    useEffect(() => {
+        if (!serverSide || virtualRows.length === 0) return;
+        const firstRow = virtualRows[0].index;
+        const lastRow = virtualRows[virtualRows.length - 1].index;
+        latestViewportRef.current = {
+            start: firstRow,
+            end: lastRow,
+            count: Math.max(1, lastRow - firstRow + 1)
+        };
+    }, [serverSide, virtualRows]);
 
     // 2. Column Virtualizer (Extracted)
     const {
@@ -1915,6 +2476,37 @@ export default function DashTanstackPivot(props) {
         parentRef,
         table
     });
+
+    // Memoized lookup structures for the header render path.
+    // centerColIndexMap: O(1) id→index lookup; only rebuilt when the column list changes.
+    // visibleLeafIndexSet: O(1) membership check; only rebuilt when the virtual window shifts.
+    const centerColIndexMap = useMemo(
+        () => new Map(centerCols.map((c, i) => [c.id, i])),
+        [centerCols]
+    );
+    const visibleLeafIndexSet = useMemo(
+        () => new Set(virtualCenterCols.map(v => v.index)),
+        [virtualCenterCols]
+    );
+
+    // O(1) colId → visible-leaf-index map for renderCell; rebuilt only when column list changes.
+    const visibleLeafColIndexMap = useMemo(
+        () => new Map(table.getVisibleLeafColumns().map((c, i) => [c.id, i])),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [table.getVisibleLeafColumns()]
+    );
+
+    // Sync the column virtualizer's visible range into state so useServerSideRowModel
+    // can detect column window changes and trigger re-fetches.
+    useEffect(() => {
+        if (virtualCenterCols.length === 0) return;
+        const newStart = virtualCenterCols[0].index;
+        const newEnd = virtualCenterCols[virtualCenterCols.length - 1].index;
+        setVisibleColRange(prev => {
+            if (prev.start === newStart && prev.end === newEnd) return prev;
+            return { start: newStart, end: newEnd };
+        });
+    }, [virtualCenterCols]);
 
     // Use the custom hook
     const { getHeaderStickyStyle, getStickyStyle } = useStickyStyles(
@@ -2051,24 +2643,101 @@ export default function DashTanstackPivot(props) {
 
 
 
-    const exportExcel = () => {
-        const rowsToExport = rows.map(r => {
-             const d = { 'Hierarchy': r.original._id };
-             columns.forEach(c => {
-                 const visit = col => {
-                     if (col.columns) col.columns.forEach(visit);
-                     else if (col.accessorKey) d[col.header] = r.getValue(col.accessorKey);
-                 };
-                 visit(c);
-             });
-             return d;
+    const buildExportAoa = (allRows, allColumns) => {
+        // Collect leaf columns in left-to-right order
+        const leafCols = [];
+        const collectLeaves = (col) => {
+            if (col.columns && col.columns.length > 0) {
+                col.columns.forEach(collectLeaves);
+            } else {
+                leafCols.push(col);
+            }
+        };
+        allColumns.forEach(collectLeaves);
+
+        // Build parent header row (group header text, repeated per leaf span)
+        // and leaf header row
+        const parentHeaderRow = leafCols.map(c => c.parent ? (c.parent.header ?? c.parent.id ?? '') : (c.header ?? c.id ?? ''));
+        const leafHeaderRow   = leafCols.map(c => c.header ?? c.accessorKey ?? c.id ?? '');
+
+        // Build data rows — include ALL rows (totals + data rows)
+        const dataRows = allRows.map(r => {
+            return leafCols.map(c => {
+                if (c.id === 'hierarchy' || c.accessorKey === 'hierarchy' || !c.accessorKey) {
+                    // Hierarchy column: indent by depth
+                    const depth = r.depth ?? r.original?.depth ?? 0;
+                    const label = r.original?._id ?? '';
+                    return '  '.repeat(depth) + label;
+                }
+                const val = r.original?.[c.accessorKey];
+                return val !== undefined && val !== null ? val : '';
+            });
         });
-        const ws = XLSX.utils.json_to_sheet(rowsToExport);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Pivot");
-        const buf = XLSX.write(wb, { bookType:'xlsx', type:'array' });
-        saveAs(new Blob([buf], {type:'application/octet-stream'}), 'pivot.xlsx');
+
+        // Compute !merges for parent header row
+        // Walk leafCols and group consecutive cols with the same parent header text
+        const merges = [];
+        let mergeStart = 0;
+        while (mergeStart < leafCols.length) {
+            const parentText = parentHeaderRow[mergeStart];
+            let mergeEnd = mergeStart;
+            while (mergeEnd + 1 < leafCols.length && parentHeaderRow[mergeEnd + 1] === parentText) {
+                mergeEnd++;
+            }
+            if (mergeEnd > mergeStart) {
+                // rows are 0-indexed; row 0 = parentHeaderRow
+                merges.push({ s: { r: 0, c: mergeStart }, e: { r: 0, c: mergeEnd } });
+            }
+            mergeStart = mergeEnd + 1;
+        }
+
+        return { aoa: [parentHeaderRow, leafHeaderRow, ...dataRows], merges };
     };
+
+    const exportPivot = useCallback(() => {
+        const XLSX_LIMIT = 500000;
+        const allRows = table.getRowModel().rows;  // full row model, not just virtual window
+
+        const isCSV = (rowCount || 0) > XLSX_LIMIT;
+
+        if (isCSV) {
+            // CSV path — flat, no merge support needed
+            const leafCols = [];
+            const collectLeaves = (col) => {
+                if (col.columns && col.columns.length > 0) col.columns.forEach(collectLeaves);
+                else leafCols.push(col);
+            };
+            columns.forEach(collectLeaves);
+
+            const escape = (v) => {
+                if (v == null) return '';
+                const s = String(v);
+                return (s.includes(',') || s.includes('"') || s.includes('\n'))
+                    ? `"${s.replace(/"/g, '""')}"` : s;
+            };
+            const header = leafCols.map(c => escape(c.header ?? c.accessorKey ?? c.id ?? '')).join(',');
+            const lines = allRows.map(r =>
+                leafCols.map(c => {
+                    if (!c.accessorKey) {
+                        const depth = r.depth ?? r.original?.depth ?? 0;
+                        return escape('  '.repeat(depth) + (r.original?._id ?? ''));
+                    }
+                    return escape(r.original?.[c.accessorKey] ?? '');
+                }).join(',')
+            );
+            const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv;charset=utf-8;' });
+            saveAs(blob, 'pivot.csv');
+        } else {
+            // XLSX path — multi-level headers + hierarchy indent
+            const { aoa, merges } = buildExportAoa(allRows, columns);
+            const ws = XLSX.utils.aoa_to_sheet(aoa);
+            if (merges.length > 0) ws['!merges'] = merges;
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Pivot');
+            const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+            saveAs(new Blob([buf], { type: 'application/octet-stream' }), 'pivot.xlsx');
+        }
+    }, [rows, columns, rowCount, table]);
 
     // --- Helper to Render a single Cell with useCallback ---
             const renderCell = useCallback((cell, virtualRowIndex, isLastPinnedLeft = false, isFirstPinnedRight = false, isVirtualRow = false) => {
@@ -2076,7 +2745,7 @@ export default function DashTanstackPivot(props) {
                 
                 const row = cell.row;
                 const col = cell.column;
-                const colIndex = table.getVisibleLeafColumns().findIndex(c => c.id === col.id);
+                const colIndex = visibleLeafColIndexMap.get(col.id) ?? -1;
                 const isHierarchy = cell.column.id === 'hierarchy';
                 const isSelected = selectedCells[`${row.id}:${cell.column.id}`] !== undefined;
                 const isLastSelected = lastSelected && lastSelected.rowIndex === virtualRowIndex && lastSelected.colIndex === colIndex; // Approximate check            
@@ -2090,7 +2759,9 @@ export default function DashTanstackPivot(props) {
                  }
             }
     
-            const rowBackground = (row.original && row.original._isTotal) ? '#e8f5e9' : (isDarkTheme(theme) ? '#212121' : '#fff');
+            const rowBackground = (row.original && row.original._isTotal)
+                ? (isDarkTheme(theme) ? '#1a2e1a' : '#f0f7f0')
+                : (isDarkTheme(theme) ? '#212121' : '#fff');
             let bg = rowBackground;
             if (isSelected) bg = theme.select;
     
@@ -2132,7 +2803,8 @@ export default function DashTanstackPivot(props) {
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: isHierarchy ? 'flex-start' : 'flex-end',
-                        fontWeight: ((row.original && row.original._isTotal) || (isHierarchy && row.getIsGrouped())) ? 500 : 400,
+                        fontWeight: (row.original && row.original._isTotal) ? 700 : ((isHierarchy && row.getIsGrouped()) ? 500 : 400),
+                        color: (row.original && row.original._isTotal) ? theme.text : undefined,
                         background: bg,
                         ...stickyStyle,
                         ...condStyle,
@@ -2164,7 +2836,9 @@ export default function DashTanstackPivot(props) {
         }, [selectedCells, fillRange, theme, getStickyStyle, handleCellMouseDown, handleCellMouseEnter, handleContextMenu, handleFillMouseDown, isDarkTheme]);
 
     // NEW: Render Header Cell for Split Sections
-    const renderHeaderCell = (header, level, isLastPinnedLeft = false, isFirstPinnedRight = false, renderSection = 'center') => {
+    // overrideWidth: when set, replaces the computed section width (used for partially-visible
+    // group headers during center-column virtualization so the width matches only the visible leaves).
+    const renderHeaderCell = (header, level, isLastPinnedLeft = false, isFirstPinnedRight = false, renderSection = 'center', overrideWidth = null) => {
         const isGroupHeader = header.column.columns && header.column.columns.length > 0;
         const isSorted = header.column.getIsSorted();
         const sortIndex = header.column.getSortIndex();
@@ -2177,7 +2851,7 @@ export default function DashTanstackPivot(props) {
         const sectionWidth = leafColumns
             .filter(column => sectionLeafIds.has(column.id))
             .reduce((sum, column) => sum + column.getSize(), 0);
-        const headerWidth = sectionWidth || header.getSize();
+        const headerWidth = overrideWidth !== null ? overrideWidth : (sectionWidth || header.getSize());
 
         // Calculate sticky style for pinned headers using the hook
         const stickyStyle = getHeaderStickyStyle(header, level, isLastPinnedLeft, isFirstPinnedRight, renderSection);
@@ -2315,6 +2989,7 @@ export default function DashTanstackPivot(props) {
 
     return (
         <div id={id} style={{ ...styles.root, ...style }}>
+            <style>{loadingAnimationStyles}</style>
             <div style={srOnly} role="status" aria-live="polite">{announcement}</div>
             <div style={styles.appBar}>
                 <div style={{display:'flex', alignItems:'center', gap:'12px'}}>
@@ -2354,8 +3029,8 @@ export default function DashTanstackPivot(props) {
                             background: theme.primary,
                             filter: 'brightness(1.1)'
                         }
-                    }} onClick={exportExcel}>
-                        <Icons.Export/> Export
+                    }} onClick={exportPivot}>
+                        <Icons.Export/> {(rowCount || 0) > 500000 ? 'Export CSV' : 'Export'}
                     </button>
                 </div>
             </div>
@@ -2452,6 +3127,20 @@ export default function DashTanstackPivot(props) {
                             {[{id:'rows', label:'Rows'}, {id:'cols', label:'Columns'}, {id:'vals', label:'Values'}, {id:'filter', label:'Filters'}].map(zone => (
                                 <div key={zone.id}>
                                     <div style={styles.sectionTitle}>{zone.label}</div>
+                                    {zone.id === 'rows' && rowFields.length > 0 && (
+                                        <div style={{display:'flex', gap:'4px', padding:'0 4px 6px 4px'}}>
+                                            <button
+                                                title="Expand all hierarchy levels"
+                                                onClick={() => handleExpandAllRows(true)}
+                                                style={{flex:1, border:`1px solid ${theme.primary}`, background:theme.select, cursor:'pointer', padding:'3px 6px', fontSize:'11px', color:theme.primary, borderRadius:'4px', fontWeight:600}}
+                                            >+ Expand All</button>
+                                            <button
+                                                title="Collapse all rows"
+                                                onClick={() => handleExpandAllRows(false)}
+                                                style={{flex:1, border:`1px solid ${theme.border}`, background:theme.background, cursor:'pointer', padding:'3px 6px', fontSize:'11px', color:theme.textSec, borderRadius:'4px'}}
+                                            >- Collapse All</button>
+                                        </div>
+                                    )}
                                     <div style={styles.dropZone} onDragOver={e=>e.preventDefault()} onDrop={e=>onDrop(e, zone.id)}>
                                         {(zone.id==='filter' ? Object.keys(filters).filter(k=>k!=='global') : zone.id==='rows'?rowFields:zone.id==='cols'?colFields:valConfigs).map((item, idx) => {
                                             const label = zone.id==='vals' ? item.field : item;
@@ -2985,30 +3674,92 @@ export default function DashTanstackPivot(props) {
                                  </div>
 
                                  {/* Center Section */}
-                                 <div>
-                                     {table.getCenterHeaderGroups().map((group, level) => (
-                                         <div key={group.id} style={{display: 'flex', height: rowHeight, borderBottom: `1px solid ${theme.border}`}}>
-                                             {group.headers.map(header => renderHeaderCell(header, level, false, false, 'center'))}
+                                 <div style={{position: 'relative'}}>
+                                     {table.getCenterHeaderGroups().map((group, level) => {
+                                         // Virtualize center headers: only render headers whose leaf
+                                         // columns overlap the visible virtual column range, plus spacers.
+                                         // centerColIndexMap and visibleLeafIndexSet are memoized above the render.
+                                         const visibleHeaders = [];
+                                         for (const header of group.headers) {
+                                             const leafCols = header.column.getLeafColumns
+                                                 ? header.column.getLeafColumns()
+                                                 : [header.column];
+                                             const centerLeafPairs = leafCols
+                                                 .map(lc => ({ col: lc, idx: centerColIndexMap.has(lc.id) ? centerColIndexMap.get(lc.id) : -1 }))
+                                                 .filter(p => p.idx >= 0);
+                                             if (centerLeafPairs.length === 0) continue;
+                                             const visiblePairs = centerLeafPairs.filter(p => visibleLeafIndexSet.has(p.idx));
+                                             if (visiblePairs.length === 0) continue;
+                                             const visWidth = visiblePairs.reduce((sum, p) => sum + p.col.getSize(), 0);
+                                             visibleHeaders.push({ header, visWidth });
+                                         }
+                                         return (
+                                             <div key={group.id} style={{display: 'flex', height: rowHeight, borderBottom: `1px solid ${theme.border}`}}>
+                                                 <div style={{ width: beforeWidth, flexShrink: 0 }} />
+                                                 {visibleHeaders.map(({ header, visWidth }) =>
+                                                     renderHeaderCell(header, level, false, false, 'center', visWidth)
+                                                 )}
+                                                 <div style={{ width: afterWidth, flexShrink: 0 }} />
+                                             </div>
+                                         );
+                                     })}
+                                     {showColumnLoadingSkeletons && (
+                                         <div
+                                             aria-hidden="true"
+                                             style={{
+                                                 position: 'absolute',
+                                                 top: 0,
+                                                 right: 0,
+                                                 height: rowHeight,
+                                                 display: 'flex',
+                                                 alignItems: 'center',
+                                                 justifyContent: 'flex-end',
+                                                 gap: '8px',
+                                                 padding: '0 8px',
+                                                 pointerEvents: 'none',
+                                                 zIndex: 9
+                                             }}
+                                         >
+                                             {Array.from({ length: pendingColumnSkeletonCount }).map((_, index) => (
+                                                 <div
+                                                     key={`col-header-skeleton-${index}`}
+                                                     style={{
+                                                         width: `${columnSkeletonWidth}px`,
+                                                         height: '60%',
+                                                         borderRadius: '8px',
+                                                         background: 'linear-gradient(90deg, #eef2fb 0%, #dbe8ff 45%, #eef2fb 100%)',
+                                                         backgroundSize: '220% 100%',
+                                                         border: `1px solid ${theme.border}`,
+                                                         animation: 'pivot-row-loader-enter 220ms ease-out, pivot-skeleton-shimmer 1.25s ease-in-out infinite'
+                                                     }}
+                                                 />
+                                             ))}
                                          </div>
-                                     ))}
+                                     )}
                                      {showFloatingFilters && (
                                          <div style={{display: 'flex', height: rowHeight, borderBottom: `1px solid ${theme.border}`, background: theme.background}}>
-                                             {centerCols.map((column) => (
-                                                 <div key={column.id} style={{...styles.headerCell, width: column.getSize(), height: rowHeight, padding: '2px 4px'}}>
-                                                     {column.id !== 'hierarchy' && (
-                                                         <input
-                                                             style={{width: '100%', fontSize: '11px', padding: '2px 4px', border: `1px solid ${theme.border}`, borderRadius: '2px'}}
-                                                             placeholder="Filter..."
-                                                             value={(filters[column.id] && filters[column.id].conditions && filters[column.id].conditions[0]) ? filters[column.id].conditions[0].value : ''}
-                                                             onChange={e => handleHeaderFilter(column.id, {
-                                                                 operator: 'AND',
-                                                                 conditions: [{ type: 'contains', value: e.target.value, caseSensitive: false }]
-                                                             })}
-                                                             onClick={(e) => e.stopPropagation()}
-                                                         />
-                                                     )}
-                                                 </div>
-                                             ))}
+                                             <div style={{ width: beforeWidth, flexShrink: 0 }} />
+                                             {virtualCenterCols.map(virtualCol => {
+                                                 const column = centerCols[virtualCol.index];
+                                                 if (!column) return null;
+                                                 return (
+                                                     <div key={column.id} style={{...styles.headerCell, width: column.getSize(), height: rowHeight, padding: '2px 4px'}}>
+                                                         {column.id !== 'hierarchy' && (
+                                                             <input
+                                                                 style={{width: '100%', fontSize: '11px', padding: '2px 4px', border: `1px solid ${theme.border}`, borderRadius: '2px'}}
+                                                                 placeholder="Filter..."
+                                                                 value={(filters[column.id] && filters[column.id].conditions && filters[column.id].conditions[0]) ? filters[column.id].conditions[0].value : ''}
+                                                                 onChange={e => handleHeaderFilter(column.id, {
+                                                                     operator: 'AND',
+                                                                     conditions: [{ type: 'contains', value: e.target.value, caseSensitive: false }]
+                                                                 })}
+                                                                 onClick={(e) => e.stopPropagation()}
+                                                             />
+                                                         )}
+                                                     </div>
+                                                 );
+                                             })}
+                                             <div style={{ width: afterWidth, flexShrink: 0 }} />
                                          </div>
                                      )}
                                  </div>
@@ -3044,7 +3795,7 @@ export default function DashTanstackPivot(props) {
                              </div>
 
                              {/* Top Pinned Rows */}
-                            {effectiveTopRows.map((row, i) => {
+                             {effectiveTopRows.map((row, i) => {
                                  const isExpandedRow = row.getIsExpanded();
                                  const isLastPinnedTop = i === effectiveTopRows.length - 1;
                                  const headerHeight = (table.getHeaderGroups().length * rowHeight) + (showFloatingFilters ? rowHeight : 0);
@@ -3059,7 +3810,7 @@ export default function DashTanstackPivot(props) {
                                          position: 'sticky',
                                          top: headerHeight + (i * rowHeight),
                                          zIndex: 50, // Increased for top rows
-                                         background: (row.original && row.original._isTotal) ? '#e8f5e9' : theme.background,
+                                         background: (row.original && row.original._isTotal) ? (isDarkTheme(theme) ? '#1a2e1a' : '#f0f7f0') : theme.background,
                                          borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
                                          boxShadow: isLastPinnedTop ? `0 2px 4px -2px ${theme.border}80` : 'none'
                                      }}>
@@ -3074,6 +3825,38 @@ export default function DashTanstackPivot(props) {
                                      </div>
                                  )
                              })}
+
+                             {showColumnLoadingSkeletons && (
+                                 <div
+                                     aria-hidden="true"
+                                     style={{
+                                         position: 'absolute',
+                                         top: `${bodyRowsTopOffset}px`,
+                                         right: 0,
+                                         height: `${Math.max(rowVirtualizer.getTotalSize(), rowHeight * 4)}px`,
+                                         display: 'flex',
+                                         gap: '8px',
+                                         padding: '0 8px',
+                                         pointerEvents: 'none',
+                                         zIndex: 3
+                                     }}
+                                 >
+                                     {Array.from({ length: pendingColumnSkeletonCount }).map((_, index) => (
+                                         <div
+                                             key={`col-body-skeleton-${index}`}
+                                             style={{
+                                                 width: `${columnSkeletonWidth}px`,
+                                                 height: '100%',
+                                                 borderRadius: '8px',
+                                                 background: 'linear-gradient(90deg, rgba(238,242,251,0.65) 0%, rgba(219,232,255,0.9) 45%, rgba(238,242,251,0.65) 100%)',
+                                                 backgroundSize: '220% 100%',
+                                                 border: `1px solid ${theme.border}55`,
+                                                 animation: 'pivot-row-loader-enter 220ms ease-out, pivot-skeleton-shimmer 1.25s ease-in-out infinite'
+                                             }}
+                                         />
+                                     ))}
+                                 </div>
+                             )}
 
                              {/* Center Virtualized Rows */}
                              {virtualRows.map(virtualRow => {
@@ -3151,7 +3934,7 @@ export default function DashTanstackPivot(props) {
                                              top: `${virtualRow.start + topOffset}px`,
                                              width: `${totalLayoutWidth}px`,
                                              position: 'absolute',
-                                             background: theme.background,
+                                             background: (row.original && row.original._isTotal) ? (isDarkTheme(theme) ? '#1a2e1a' : '#f0f7f0') : theme.background,
                                              borderBottom: `1px solid ${theme.border}`,
                                              display: 'flex', alignItems: 'center'
                                          }}>
@@ -3165,33 +3948,93 @@ export default function DashTanstackPivot(props) {
                                      return null; 
                                  }
 
-                                 const isExpandedRow = row.getIsExpanded();
+                                  const isExpandedRow = row.getIsExpanded();
+                                  const pendingTransitionMode = pendingRowTransitions.get(row.id);
+                                  const showRowTransitionLoader = !!pendingTransitionMode;
 
-                                 return (
-                                     <div
-                                        key={row.id}
-                                        role="row"
-                                        aria-rowindex={virtualRow.index}
-                                        style={{
-                                         ...styles.row,
-                                         height: virtualRow.size,
-                                         top: `${virtualRow.start + topOffset}px`,
-                                         width: `${totalLayoutWidth}px`,
-                                         background: (row.original && row.original._isTotal) ? '#e8f5e9' : '#fff',
-                                         borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
-                                         transition: rowVirtualizer.isScrolling ? 'none' : 'top 0.2s ease-out, background-color 0.2s'
-                                     }}>
-                                         {row.getLeftVisibleCells().map((cell, idx) => renderCell(cell, virtualRow.index, idx === leftCols.length - 1, false, true))}
-                                         <div style={{ width: beforeWidth, flexShrink: 0 }} />
-                                         {virtualCenterCols.map(virtualCol => {
-                                             const cell = row.getCenterVisibleCells()[virtualCol.index];
-                                             return renderCell(cell, virtualRow.index, false, false, true);
-                                         })}
-                                         <div style={{ width: afterWidth, flexShrink: 0 }} />
-                                         {row.getRightVisibleCells().map((cell, idx) => renderCell(cell, virtualRow.index, false, idx === 0, true))}
-                                     </div>
-                                 )
-                             })}
+                                  // Stable key: use row path/id for loaded rows so expand/collapse
+                                  // does not remount rows that merely shifted index (AG Grid getRowId pattern).
+                                  const stableRowKey = serverSide
+                                      ? (row.id || String(virtualRow.index))
+                                      : String(virtualRow.index);
+
+                                  return (
+                                      <React.Fragment key={stableRowKey}>
+                                          <div
+                                             role="row"
+                                             aria-rowindex={virtualRow.index}
+                                             style={{
+                                              ...styles.row,
+                                              height: virtualRow.size,
+                                              top: `${virtualRow.start + topOffset}px`,
+                                              width: `${totalLayoutWidth}px`,
+                                              background: (row.original && row.original._isTotal) ? (isDarkTheme(theme) ? '#1a2e1a' : '#f0f7f0') : theme.background,
+                                              borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
+                                              transition: rowVirtualizer.isScrolling ? 'none' : 'background-color 0.2s'
+                                          }}>
+                                              {row.getLeftVisibleCells().map((cell, idx) => renderCell(cell, virtualRow.index, idx === leftCols.length - 1, false, true))}
+                                              <div style={{ width: beforeWidth, flexShrink: 0 }} />
+                                              {virtualCenterCols.map(virtualCol => {
+                                                  const cell = row.getCenterVisibleCells()[virtualCol.index];
+                                                  return renderCell(cell, virtualRow.index, false, false, true);
+                                              })}
+                                              <div style={{ width: afterWidth, flexShrink: 0 }} />
+                                              {row.getRightVisibleCells().map((cell, idx) => renderCell(cell, virtualRow.index, false, idx === 0, true))}
+                                          </div>
+                                          {showRowTransitionLoader && (
+                                              <div
+                                                 role="row"
+                                                 aria-hidden="true"
+                                                 style={{
+                                                  ...styles.row,
+                                                  pointerEvents: 'none',
+                                                  height: rowHeight,
+                                                  top: `${virtualRow.start + topOffset + virtualRow.size}px`,
+                                                  width: `${totalLayoutWidth}px`,
+                                                  position: 'absolute',
+                                                  background: `linear-gradient(90deg, #f8fbff 0%, #eef5ff 50%, #f8fbff 100%)`,
+                                                  backgroundSize: '220% 100%',
+                                                  borderBottom: `1px dashed ${theme.border}`,
+                                                  display: 'flex',
+                                                  alignItems: 'center',
+                                                  justifyContent: 'flex-start',
+                                                  overflow: 'hidden',
+                                                  opacity: 0.95,
+                                                  zIndex: 18,
+                                                  boxShadow: `0 4px 12px -8px ${theme.border}`,
+                                                  animation: 'pivot-row-loader-enter 220ms ease-out, pivot-skeleton-shimmer 1.25s ease-in-out infinite'
+                                              }}>
+                                                  <SkeletonRow style={{width: '100%', opacity: 0.45}} rowHeight={rowHeight} />
+                                                  <div
+                                                     style={{
+                                                      position: 'absolute',
+                                                      paddingLeft: `${((row.original && typeof row.original.depth === 'number' ? row.original.depth : row.depth || 0) + 1) * 24 + 8}px`,
+                                                      fontSize: '12px',
+                                                      color: theme.textSec,
+                                                      display: 'flex',
+                                                      alignItems: 'center',
+                                                      gap: '8px',
+                                                      fontWeight: 500
+                                                  }}
+                                                  >
+                                                      <span
+                                                         aria-hidden="true"
+                                                         style={{
+                                                          width: '11px',
+                                                          height: '11px',
+                                                          border: `2px solid ${theme.primary}`,
+                                                          borderTopColor: 'transparent',
+                                                          borderRadius: '50%',
+                                                          animation: 'pivot-spinner-rotate 0.75s linear infinite'
+                                                      }}
+                                                      />
+                                                      {pendingTransitionMode === 'collapse' ? 'Collapsing...' : 'Loading children...'}
+                                                  </div>
+                                              </div>
+                                          )}
+                                      </React.Fragment>
+                                  )
+                              })}
 
                              {/* Spacer: only needed when grand total is pinned to bottom.
                                   Virtual rows use position:absolute (out of flow), so without this spacer
@@ -3215,7 +4058,7 @@ export default function DashTanstackPivot(props) {
                                          position: 'sticky',
                                          bottom: ((effectiveBottomRows.length - 1 - i) * rowHeight),
                                          zIndex: 50, // Increased for bottom rows
-                                         background: (row.original && row.original._isTotal) ? '#e8f5e9' : theme.background,
+                                         background: (row.original && row.original._isTotal) ? (isDarkTheme(theme) ? '#1a2e1a' : '#f0f7f0') : theme.background,
                                          borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
                                          boxShadow: isFirstPinnedBottom ? `0 -2px 4px -2px ${theme.border}80` : 'none'
                                      }}>
@@ -3243,6 +4086,7 @@ export default function DashTanstackPivot(props) {
 
 DashTanstackPivot.propTypes = {
     id: PropTypes.string,
+    table: PropTypes.string,
         data: PropTypes.arrayOf(PropTypes.object),
         setProps: PropTypes.func,
         style: PropTypes.object,
@@ -3300,5 +4144,6 @@ DashTanstackPivot.propTypes = {
     sortEvent: PropTypes.object,
     availableFieldList: PropTypes.arrayOf(PropTypes.string),
     dataOffset: PropTypes.number,
-    dataVersion: PropTypes.number
+    dataVersion: PropTypes.number,
 };
+
