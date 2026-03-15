@@ -1223,26 +1223,8 @@ export default function DashTanstackPivot(props) {
 
         actions.push('separator');
         actions.push({ label: 'Drill Through', icon: <Icons.Search/>, onClick: () => {
-             if (setProps) {
-                 // Construct drill through context
-                 const drillFilters = { ...filters };
-                 // Add row group filters
-                 let currentRow = row;
-                 while (currentRow) {
-                     if (currentRow.groupingColumnId) {
-                         drillFilters[currentRow.groupingColumnId] = { operator: 'AND', conditions: [{ type: 'eq', value: currentRow.groupingValue }] };
-                     }
-                     currentRow = currentRow.getParentRow();
-                 }
-                 
-                 setProps({
-                     drillThrough: { 
-                         rowId, 
-                         colId, 
-                         filters: drillFilters,
-                         value
-                     } 
-                 });
+             if (row && row.original && row.original._path && row.original._path !== '__grand_total__' && !row.original._isTotal) {
+                 fetchDrillData(row.original._path, 0, null, 'asc', '');
              }
         }});
 
@@ -2757,7 +2739,7 @@ export default function DashTanstackPivot(props) {
             row_path: rowPath,
             row_fields: rowFields.join(','),
             page: String(page),
-            page_size: '500',
+            page_size: '100',
         });
         if (sortCol) { params.set('sort_col', sortCol); params.set('sort_dir', sortDir); }
         if (filterText) params.set('filter', filterText);
@@ -2881,16 +2863,13 @@ export default function DashTanstackPivot(props) {
                 cellContent = flexRender(cell.column.columnDef.cell, cell.getContext());
             }
     
-            const isDrillableCell = !isHierarchy && !(row.original && row.original._isTotal);
             return (
                 <div
                     key={cell.id}
                     role="gridcell"
                     aria-selected={isSelected}
-                    data-drill={isDrillableCell ? "true" : undefined}
                     onMouseDown={(e) => handleCellMouseDown(e, virtualRowIndex, colIndex, row.id, cell.column.id, cell.getValue())}
                     onMouseEnter={() => handleCellMouseEnter(virtualRowIndex, colIndex)}
-                    onClick={isDrillableCell ? () => handleCellDrillThrough(row, col.id) : undefined}
                     style={{
                         ...styles.cell,
                         width: col.getSize(),
@@ -2906,7 +2885,6 @@ export default function DashTanstackPivot(props) {
                         ...(isFillSelected ? {boxShadow: `inset 0 0 0 1px ${theme.primary}`} : {}),
                         userSelect: 'none',
                         position: stickyStyle && stickyStyle.position === 'sticky' ? 'sticky' : 'relative',
-                        cursor: isDrillableCell ? 'pointer' : undefined,
                     }}
                     onContextMenu={e => handleContextMenu(e, cell.getValue(), cell.column.id, row)}
                 >
@@ -2929,7 +2907,7 @@ export default function DashTanstackPivot(props) {
                     )}
                 </div>
             );
-        }, [selectedCells, fillRange, theme, getStickyStyle, handleCellMouseDown, handleCellMouseEnter, handleContextMenu, handleFillMouseDown, isDarkTheme, handleCellDrillThrough]);
+        }, [selectedCells, fillRange, theme, getStickyStyle, handleCellMouseDown, handleCellMouseEnter, handleContextMenu, handleFillMouseDown, isDarkTheme]);
 
     // NEW: Render Header Cell for Split Sections
     // overrideWidth: when set, replaces the computed section width (used for partially-visible

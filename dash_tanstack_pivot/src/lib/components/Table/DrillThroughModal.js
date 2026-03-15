@@ -6,12 +6,15 @@ const DrillThroughModal = ({ drillState, onClose, onPageChange, onSort, onFilter
     if (!drillState) return null;
 
     const { loading, rows, page, totalRows, sortCol, sortDir } = drillState;
-    const pageSize = 500;
+    const pageSize = 100;
     const totalPages = Math.ceil((totalRows || 0) / pageSize);
     const columns = rows && rows.length > 0 ? Object.keys(rows[0]).filter(k => !k.startsWith('_')) : [];
 
     const handleFilterKeyDown = (e) => {
-        if (e.key === 'Enter') onFilter(filterInput);
+        if (e.key === 'Enter') {
+            // Parent's onFilter always resets page to 0 before fetching
+            onFilter(filterInput);
+        }
     };
 
     const handleSortClick = (col) => {
