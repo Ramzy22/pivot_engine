@@ -16,7 +16,7 @@ This is a brownfield project with a substantial existing codebase (~65 test file
 - [x] **Phase 3.1: Debug Instrumentation + Grand Total Fix** [INSERTED] - Add request/response debug logging to adapter, diagnose and fix duplicate grand total row, add regression (completed 2026-03-13)
 - [x] **Phase 3.2: Test Harness Hardening** [INSERTED] - Fix unguarded app import in test_frontend_contract.py, remove dead except block in app.py (completed 2026-03-14)
 - [x] **Phase 4: Data Input API** - Unify data prop to accept DataFrame, polars, Ibis, or connection string with auto-detection (completed 2026-03-14)
-- [ ] **Phase 5: Field Zone UI** - Complete drag-and-drop sidebar with four zones, aggregation selector, bidirectional Dash props
+- [x] **Phase 5: Field Zone UI** - Complete drag-and-drop sidebar with four zones, aggregation selector, bidirectional Dash props (completed 2026-03-15)
 - [ ] **Phase 6: Drill-Through & Excel Export** - Cell drill-through modal (server-side via REST endpoint, not Dash callbacks) with pagination, and Excel .xlsx download
 - [ ] **Phase 7: Column Display & UI States** - Review and correct all column states (pinned, sorted, hidden, resized), their visual indicators, and UI defaults
 - [ ] **Phase 8: Code Quality Refactor** - Split 1500-line component, add error boundaries, fix stale closures and filter duplication
@@ -142,17 +142,23 @@ Plans:
 - [ ] 05-04-PLAN.md — Pending
 
 ### Phase 6: Drill-Through & Excel Export
-**Goal**: Users can investigate any aggregated cell by seeing its source rows in a modal, and can download the current pivot view as an Excel file
+**Goal**: Users can investigate any aggregated cell by seeing its source rows in a modal, and can download the current pivot view as an Excel file (or CSV when the row count exceeds the safe Excel threshold)
 **Depends on**: Phase 5
-**Requirements**: DRILL-01, DRILL-02, DRILL-03, DRILL-04, DRILL-05, DRILL-06, EXPORT-01, EXPORT-02, EXPORT-03, EXPORT-04
+**Requirements**: DRILL-01, DRILL-02, DRILL-03, DRILL-04, DRILL-05, DRILL-06, EXPORT-01, EXPORT-02, EXPORT-03, EXPORT-04, EXPORT-05
 **Success Criteria** (what must be TRUE):
   1. Clicking any aggregated cell opens a drill-through modal showing the underlying source rows for that cell
   2. Drill-through data is fetched via a dedicated REST endpoint (`/api/drill-through`) called directly from React — Dash callbacks are not used, so any row count is supported without serialization limits
   3. The REST endpoint applies the cell's exact pivot coordinate filters server-side (DuckDB) and returns paginated results
   4. The drill-through modal paginates server-side — each page request hits the endpoint with `?page=N&page_size=500`; no full dataset is ever sent to the browser
   5. The drill-through modal supports server-side column sorting and a text filter, both passed as query params to the endpoint
-  6. Clicking "Export to Excel" downloads a .xlsx file containing the current pivot view with multi-level headers, row hierarchy, grand totals, and subtotals
-**Plans**: TBD
+  6. Clicking "Export" downloads a .xlsx file when the visible pivot row count is ≤ 500,000 rows; when it exceeds 500,000 rows the button downloads a .csv file instead, and the UI label/icon updates to reflect which format will be produced
+**Plans**: 4 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — Add EXPORT-05 to REQUIREMENTS.md and write RED test scaffolds (test_drill_through.py, test_export.py)
+- [ ] 06-02-PLAN.md — Add /api/drill-through Flask route + extend get_drill_through_data with sort/filter/total_rows
+- [ ] 06-03-PLAN.md — Upgrade exportExcel to exportPivot with aoa_to_sheet, hierarchy indent, totals, and 500k csv/xlsx branch
+- [ ] 06-04-PLAN.md — Wire cell-click drill trigger, build DrillThroughModal sub-component, add drillEndpoint prop
 
 ### Phase 7: Column Display & UI States
 **Goal**: Every column state — pinned, sorted, hidden, resized — renders with correct visual indicators and sensible defaults; combined states work without visual glitches
@@ -204,8 +210,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 3.1 → 3.2 → 4 → 5 → 6
 | 3.1. Debug Instrumentation + Grand Total Fix | 2/2 | Complete | 2026-03-13 |
 | 3.2. Test Harness Hardening | 2/2 | Complete | 2026-03-14 |
 | 4. Data Input API | 3/3 | Complete | 2026-03-14 |
-| 5. Field Zone UI | 3/4 | In Progress | - |
-| 6. Drill-Through & Excel Export | 0/TBD | Not started | - |
+| 5. Field Zone UI | 4/4 | Complete | 2026-03-15 |
+| 6. Drill-Through & Excel Export | 0/4 | Not started | - |
 | 7. Column Display & UI States | 0/TBD | Not started | - |
 | 8. Code Quality Refactor | 0/TBD | Not started | - |
 | 9. Packaging, Docs & CI/CD | 0/TBD | Not started | - |
