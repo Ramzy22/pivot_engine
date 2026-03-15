@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready for execution
-stopped_at: Completed 06-drill-through-excel-export-01-PLAN.md
-last_updated: "2026-03-15T17:01:49.445Z"
+stopped_at: Completed 06-drill-through-excel-export-02-PLAN.md
+last_updated: "2026-03-15T17:08:05.249Z"
 last_activity: 2026-03-14 - Phase 05 plan 03 completed; sidebar and header filter popovers now share anchor geometry and clamp within the viewport
 progress:
   total_phases: 11
   completed_phases: 7
   total_plans: 27
-  completed_plans: 24
+  completed_plans: 25
   percent: 96
 ---
 
@@ -75,6 +75,7 @@ Progress: [██████████] 96%
 | Phase 05-field-zone-ui P02 | 1 min | 2 tasks | 2 files |
 | Phase 05-field-zone-ui P03 | 7 min | 2 tasks | 2 files |
 | Phase 06-drill-through-excel-export P01 | 3 | 2 tasks | 3 files |
+| Phase 06-drill-through-excel-export P02 | 6 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -130,6 +131,8 @@ Recent decisions affecting current work:
 - [Phase 06-drill-through-excel-export]: Flask TESTING flag set on app.server.config not app.config — Dash wrapper rejects unknown config keys
 - [Phase 06-drill-through-excel-export]: test_export.py tests Python controller layer directly via asyncio.run; JS SheetJS helpers are not pytest-testable
 - [Phase 06-drill-through-excel-export]: Sort test uses pytest.skip() not xfail so Plan 02 sort extension is clearly visible as future work
+- [Phase 06-drill-through-excel-export]: get_drill_through_data return type changed to Dict{rows, total_rows} so Flask endpoint has total_rows without a second query
+- [Phase 06-drill-through-excel-export]: Ibis schema.items() used instead of iter(schema) — iteration yields name strings not field objects with .type
 
 ### Pending Todos
 
@@ -141,6 +144,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-15T17:01:49.440Z
-Stopped at: Completed 06-drill-through-excel-export-01-PLAN.md
+Last session: 2026-03-15T17:08:05.242Z
+Stopped at: Completed 06-drill-through-excel-export-02-PLAN.md
 Resume file: None
