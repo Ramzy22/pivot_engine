@@ -7,12 +7,12 @@ Mark each scenario as `Pass` or `Fail` and include notes/screenshots for any fai
 
 | Scenario | Expected Result | Status | Notes |
 | --- | --- | --- | --- |
-| UI-01 | Left/right pinned separators stay visible and correct during horizontal scroll | Pending | |
-| UI-02 | Sort direction icons and active sorted emphasis remain clear and consistent | Pending | |
-| UI-03 | Hide/show column choices persist through filter and data refresh cycles | Pending | |
-| UI-04 | Resize handles show on hover/focus and resized widths persist through refresh | Pending | |
-| UI-05 | Pinned + sorted + resized states can coexist (left and right pinned) without clipping/overlap | Pending | |
-| UI-06 | Compact/normal/loose density modes keep consistent header/body/floating-filter spacing | Pending | |
+| UI-01 | Left/right pinned separators stay visible and correct during horizontal scroll | Pass | Verified in human checkpoint (approved) |
+| UI-02 | Sort direction icons and active sorted emphasis remain clear and consistent | Pass | Verified in human checkpoint (approved) |
+| UI-03 | Hide/show column choices persist through filter and data refresh cycles | Pass | Verified in human checkpoint (approved) |
+| UI-04 | Resize handles show on hover/focus and resized widths persist through refresh | Pass | Verified in human checkpoint (approved) |
+| UI-05 | Pinned + sorted + resized states can coexist (left and right pinned) without clipping/overlap | Pass | Verified in human checkpoint (approved) |
+| UI-06 | Compact/normal/loose density modes keep consistent header/body/floating-filter spacing | Pass | Verified in human checkpoint (approved) |
 
 ## UI-01: Pinned Left/Right Separators During Scroll
 
@@ -98,7 +98,7 @@ Pass criteria:
 
 ## Sign-Off
 
-- Reviewer:
-- Date:
-- Result: `Approved` / `Needs rework`
-- Failing scenarios (if any):
+- Reviewer: Human checkpoint approver
+- Date: 2026-03-15
+- Result: `Approved`
+- Failing scenarios (if any): None
