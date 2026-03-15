@@ -32,8 +32,9 @@ key-files:
 key-decisions:
   - "DrillThroughModal uses inline styles only — no separate CSS file, no external styling dependencies"
   - "fetchDrillData built as useCallback with [tableName, rowFields, drillEndpoint] deps so row_fields coordinate mapping is always current"
-  - "renderCell dependency array extended with handleCellDrillThrough to prevent stale closure over fetch function"
-  - "data-drill=true attribute added to drillable cells for test identifiability"
+  - "Drill-through triggered via right-click context menu 'Drill Through' item only — left-click on cells does NOT open the modal"
+  - "Context menu 'Drill Through' action wired to fetchDrillData directly instead of legacy drillThrough Dash prop"
+  - "page_size hard-coded to 100 per user requirement; filter param confirmed correct (parent resets page to 0 on filter)"
   - "DashTanstackPivot.py manually maintained (not regenerated) to preserve all prior manual edits"
 patterns-established:
   - "React-native modal: fetch() from React component body, useState for open/loading/rows/page — no Dash round-trip"
@@ -69,6 +70,7 @@ Each task was committed atomically:
 
 1. **Task 1: Create DrillThroughModal.js sub-component** - `5de04e8` (feat)
 2. **Task 2: Wire cell click handler, drillModal state, drillEndpoint prop, npm build** - `242e4dd` (feat)
+3. **Task 3 (post-checkpoint fixes): Right-click trigger, filter param, page_size=100** - `0341024` (fix)
 
 ## Files Created/Modified
 
@@ -93,12 +95,28 @@ Each task was committed atomically:
 - **Issue:** The plan template had the table without a scroll wrapper; wide datasets would cause modal overflow
 - **Fix:** Wrapped `<table>` in `<div style={{ overflowX: 'auto' }}>` for horizontal scrolling within the modal
 - **Files modified:** `DrillThroughModal.js`
-- **Impact:** Horizontal overflow handled correctly; matches plan's "overflow-x auto" mention in success criteria
+- **Impact:** Horizontal overflow handled correctly
+
+### Post-checkpoint fixes (from human-verify feedback)
+
+**2. [Rule 1 - Bug] Left-click trigger replaced with right-click context menu**
+- **Found during:** Task 3 (human-verify checkpoint)
+- **Issue:** User reported drill-through should only trigger via right-click "Drill Through" menu, not on every left-click
+- **Fix:** Removed `onClick={isDrillableCell ? () => handleCellDrillThrough(row, col.id) : undefined}` and `cursor: pointer` style from cells. Rewired existing context menu "Drill Through" action to call `fetchDrillData` modal directly instead of the legacy `setProps({ drillThrough: ... })` Dash callback.
+- **Files modified:** `DashTanstackPivot.react.js`
+- **Commit:** 0341024
+
+**3. [Rule 1 - Bug] page_size capped to 100 (was 500)**
+- **Found during:** Task 3 (human-verify checkpoint)
+- **Issue:** User specified max page size should be 100
+- **Fix:** Changed `page_size: '500'` to `page_size: '100'` in fetchDrillData; updated DrillThroughModal `pageSize = 100` for correct totalPages display
+- **Files modified:** `DashTanstackPivot.react.js`, `DrillThroughModal.js`
+- **Commit:** 0341024
 
 ---
 
-**Total deviations:** 1 minor enhancement (horizontal scroll wrapper)
-**Impact on plan:** No scope creep. Enhancement was called out in plan's visual spec but missing from the code template.
+**Total deviations:** 3 (1 enhancement + 2 post-checkpoint bug fixes)
+**Impact on plan:** No scope creep. User-requested behaviour change and page-size correction only.
 
 ## Issues Encountered
 

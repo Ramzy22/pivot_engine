@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Ready for execution
-stopped_at: "Completed 06-drill-through-excel-export-04-PLAN.md — checkpoint:human-verify pending"
-last_updated: "2026-03-15T17:36:50.745Z"
+stopped_at: "Completed 06-drill-through-excel-export-04-PLAN.md"
+last_updated: "2026-03-15T17:50:00Z"
 last_activity: 2026-03-14 - Phase 05 plan 03 completed; sidebar and header filter popovers now share anchor geometry and clamp within the viewport
 progress:
   total_phases: 11
@@ -77,7 +77,7 @@ Progress: [██████████] 96%
 | Phase 06-drill-through-excel-export P01 | 3 | 2 tasks | 3 files |
 | Phase 06-drill-through-excel-export P02 | 6 | 2 tasks | 4 files |
 | Phase 06-drill-through-excel-export P03 | 15 | 2 tasks | 2 files |
-| Phase 06-drill-through-excel-export P04 | 12 | 2 tasks | 4 files |
+| Phase 06-drill-through-excel-export P04 | 45 | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -138,6 +138,7 @@ Recent decisions affecting current work:
 - [Phase 06-drill-through-excel-export]: table.getHeaderGroups() used for export header traversal — column definitions lack .parent backlinks set by TanStack
 - [Phase 06-drill-through-excel-export]: Non-breaking spaces used for xlsx hierarchy depth indentation — regular spaces are stripped by Excel on open
 - [Phase 06-drill-through-excel-export]: Self-contained React modal with browser fetch() — no Dash callbacks, no dcc components, drillEndpoint prop configures REST URL from Python
+- [Phase 06-drill-through-excel-export]: Drill-through triggered via right-click context menu only — left-click on cells removed to avoid conflicts with cell selection; page_size capped at 100
 
 ### Pending Todos
 
@@ -149,6 +150,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-15T17:36:50.737Z
-Stopped at: Completed 06-drill-through-excel-export-04-PLAN.md — checkpoint:human-verify pending
+Last session: 2026-03-15T17:50:00Z
+Stopped at: Completed 06-drill-through-excel-export-04-PLAN.md (all tasks complete)
 Resume file: None
