@@ -61,10 +61,10 @@
 
 - [ ] **DRILL-01**: Clicking any aggregated cell triggers drill-through action
 - [ ] **DRILL-02**: Drill-through displays a modal showing the source rows for that cell
-- [ ] **DRILL-03**: Source rows are fetched via a dedicated REST endpoint (`/api/drill-through`) called directly from React — no Dash callback involved, no prop serialization limit
-- [ ] **DRILL-04**: Drill-through modal paginates server-side (`?page=N&page_size=500`); full dataset is never sent to the browser
-- [ ] **DRILL-05**: Drill-through modal supports server-side column sorting and text filter, both passed as query params
-- [ ] **DRILL-06**: The `/api/drill-through` REST endpoint applies the cell's exact pivot coordinate filters using DuckDB and returns only the requested page
+- [x] **DRILL-03**: Source rows are fetched via a dedicated REST endpoint (`/api/drill-through`) called directly from React — no Dash callback involved, no prop serialization limit
+- [x] **DRILL-04**: Drill-through modal paginates server-side (`?page=N&page_size=500`); full dataset is never sent to the browser
+- [x] **DRILL-05**: Drill-through modal supports server-side column sorting and text filter, both passed as query params
+- [x] **DRILL-06**: The `/api/drill-through` REST endpoint applies the cell's exact pivot coordinate filters using DuckDB and returns only the requested page
 
 ### Excel Export
 
@@ -72,7 +72,7 @@
 - [ ] **EXPORT-02**: Exported file preserves multi-level column headers
 - [ ] **EXPORT-03**: Exported file preserves row hierarchy (indentation or grouping)
 - [ ] **EXPORT-04**: Grand totals and subtotals are included in export
-- [ ] **EXPORT-05**: "Export" button downloads .xlsx when pivot row count is ≤ 500,000; downloads .csv above that threshold; button label and icon update to reflect the format that will be produced
+- [x] **EXPORT-05**: "Export" button downloads .xlsx when pivot row count is ≤ 500,000; downloads .csv above that threshold; button label and icon update to reflect the format that will be produced
 
 ### Column Display & UI States
 
@@ -180,15 +180,15 @@
 | FIELD-06 | Phase 5 - Field Zone UI | Complete |
 | DRILL-01 | Phase 6 - Drill-Through & Excel Export | Pending |
 | DRILL-02 | Phase 6 - Drill-Through & Excel Export | Pending |
-| DRILL-03 | Phase 6 - Drill-Through & Excel Export | Pending |
-| DRILL-04 | Phase 6 - Drill-Through & Excel Export | Pending |
-| DRILL-05 | Phase 6 - Drill-Through & Excel Export | Pending |
-| DRILL-06 | Phase 6 - Drill-Through & Excel Export | Pending |
+| DRILL-03 | Phase 6 - Drill-Through & Excel Export | Complete |
+| DRILL-04 | Phase 6 - Drill-Through & Excel Export | Complete |
+| DRILL-05 | Phase 6 - Drill-Through & Excel Export | Complete |
+| DRILL-06 | Phase 6 - Drill-Through & Excel Export | Complete |
 | EXPORT-01 | Phase 6 - Drill-Through & Excel Export | Pending |
 | EXPORT-02 | Phase 6 - Drill-Through & Excel Export | Pending |
 | EXPORT-03 | Phase 6 - Drill-Through & Excel Export | Pending |
 | EXPORT-04 | Phase 6 - Drill-Through & Excel Export | Pending |
-| EXPORT-05 | Phase 6 - Drill-Through & Excel Export | Pending |
+| EXPORT-05 | Phase 6 - Drill-Through & Excel Export | Complete |
 | UI-01 | Phase 7 - Column Display & UI States | Pending |
 | UI-02 | Phase 7 - Column Display & UI States | Pending |
 | UI-03 | Phase 7 - Column Display & UI States | Pending |
