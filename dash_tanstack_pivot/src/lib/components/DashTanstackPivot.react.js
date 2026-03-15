@@ -128,7 +128,7 @@ export default function DashTanstackPivot(props) {
         return null;
     };
 
-    const loadPersistedPinning = (key, defaultValue) => {
+    const loadPersistedState = (key, defaultValue) => {
         if (!persistence) return defaultValue;
         const storage = getStorage();
         if (!storage) return defaultValue;
@@ -138,6 +138,17 @@ export default function DashTanstackPivot(props) {
         } catch (e) {
             console.warn('Error loading persistence for', key, e);
             return defaultValue;
+        }
+    };
+
+    const savePersistedState = (key, value) => {
+        if (!persistence) return;
+        const storage = getStorage();
+        if (!storage) return;
+        try {
+            storage.setItem(`${id}-${key}`, JSON.stringify(value));
+        } catch (e) {
+            console.warn('Error saving persistence for', key, e);
         }
     };
 
@@ -175,10 +186,11 @@ export default function DashTanstackPivot(props) {
         const [filters, setFilters] = useState(initialFilters);
         const [sorting, setSorting] = useState(initialSorting);
         const [expanded, setExpanded] = useState(initialExpanded);
-        const [columnPinning, setColumnPinning] = useState(() => loadPersistedPinning('columnPinning', initialColumnPinning));
-        const [rowPinning, setRowPinning] = useState(() => loadPersistedPinning('rowPinning', initialRowPinning));
+        const [columnPinning, setColumnPinning] = useState(() => loadPersistedState('columnPinning', initialColumnPinning));
+        const [rowPinning, setRowPinning] = useState(() => loadPersistedState('rowPinning', initialRowPinning));
         const [layoutMode, setLayoutMode] = useState('hierarchy'); // hierarchy, tabular
-        const [columnVisibility, setColumnVisibility] = useState(initialColumnVisibility);
+        const [columnVisibility, setColumnVisibility] = useState(() => loadPersistedState('columnVisibility', initialColumnVisibility));
+        const [columnSizing, setColumnSizing] = useState(() => loadPersistedState('columnSizing', {}));
         const [announcement, setAnnouncement] = useState("");
         const [drillModal, setDrillModal] = useState(null);
         // drillModal shape: { loading, rows, page, totalRows, path, sortCol, sortDir, filterText } | null
@@ -196,6 +208,7 @@ export default function DashTanstackPivot(props) {
             setColumnPinning(initialColumnPinning);
             setRowPinning(initialRowPinning);
             setColumnVisibility({});
+            setColumnSizing({});
 
             if (setPropsRef.current) {
                 setPropsRef.current({
@@ -208,6 +221,7 @@ export default function DashTanstackPivot(props) {
                     columnPinning: initialColumnPinning,
                     rowPinning: initialRowPinning,
                     columnVisibility: {},
+                    columnSizing: {},
                     reset: null
                 });
             }
@@ -217,11 +231,11 @@ export default function DashTanstackPivot(props) {
         // Save Persistence
         useEffect(() => {
             if (!persistence) return;
-            const storage = getStorage();
-            if (!storage) return;
-            storage.setItem(`${id}-columnPinning`, JSON.stringify(columnPinning));
-            storage.setItem(`${id}-rowPinning`, JSON.stringify(rowPinning));
-        }, [id, columnPinning, rowPinning, persistence, persistence_type]);
+            savePersistedState('columnPinning', columnPinning);
+            savePersistedState('rowPinning', rowPinning);
+            savePersistedState('columnVisibility', columnVisibility);
+            savePersistedState('columnSizing', columnSizing);
+        }, [id, columnPinning, rowPinning, columnVisibility, columnSizing, persistence, persistence_type]);
 
         useEffect(() => {
             const handleResize = () => {
@@ -758,13 +772,14 @@ export default function DashTanstackPivot(props) {
         showColTotals: initialShowColTotals,
         columnPinning: initialColumnPinning,
         rowPinning: initialRowPinning,
-        columnVisibility: {}
+        columnVisibility: {},
+        columnSizing: {}
     });
 
     React.useEffect(() => {
         const nextProps = {
             rowFields, colFields, valConfigs, filters, sorting, expanded,
-            showRowTotals, showColTotals, columnPinning, rowPinning, columnVisibility
+            showRowTotals, showColTotals, columnPinning, rowPinning, columnVisibility, columnSizing
         };
         const colFieldsChanged = JSON.stringify(nextProps.colFields) !== JSON.stringify(lastPropsRef.current.colFields);
 
@@ -782,7 +797,7 @@ export default function DashTanstackPivot(props) {
             // remain visible. A loading row appears below the expanded row via
             // pendingRowTransitions, and the viewport snaps in place.
             const structuralKeys = ['rowFields', 'colFields', 'valConfigs', 'filters', 'sorting',
-                'showRowTotals', 'showColTotals', 'columnPinning', 'rowPinning', 'columnVisibility'];
+                'showRowTotals', 'showColTotals', 'columnPinning', 'rowPinning', 'columnVisibility', 'columnSizing'];
             const isExpansionOnly = serverSide && structuralKeys.every(
                 key => JSON.stringify(nextProps[key]) === JSON.stringify(lastPropsRef.current[key])
             );
@@ -870,7 +885,7 @@ export default function DashTanstackPivot(props) {
                 }
             });
         }
-    }, [rowFields, colFields, valConfigs, filters, sorting, expanded, showRowTotals, showColTotals, columnPinning, rowPinning, columnVisibility, beginStructuralTransaction, beginExpansionRequest, serverSide, tableName]);
+    }, [rowFields, colFields, valConfigs, filters, sorting, expanded, showRowTotals, showColTotals, columnPinning, rowPinning, columnVisibility, columnSizing, beginStructuralTransaction, beginExpansionRequest, serverSide, tableName]);
 
     useEffect(() => {
         const handleClick = () => setContextMenu(null);
@@ -1800,6 +1815,44 @@ export default function DashTanstackPivot(props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [rowFields, colFields, valConfigs, minMax, colorScale, colExpanded, serverSide, layoutMode, showRowNumbers, isRowSelecting, rowDragStart, props.columns, cachedColSchema]);
 
+    useEffect(() => {
+        const activeLeafIds = new Set();
+        const stack = [...columns];
+
+        while (stack.length > 0) {
+            const columnDef = stack.pop();
+            if (!columnDef) continue;
+
+            if (Array.isArray(columnDef.columns) && columnDef.columns.length > 0) {
+                columnDef.columns.forEach(child => stack.push(child));
+                continue;
+            }
+
+            const leafId = columnDef.id || columnDef.accessorKey;
+            if (leafId) {
+                activeLeafIds.add(String(leafId));
+            }
+        }
+
+        setColumnSizing(prev => {
+            if (!prev || typeof prev !== 'object' || Object.keys(prev).length === 0) {
+                return prev;
+            }
+
+            let changed = false;
+            const next = {};
+            Object.keys(prev).forEach(key => {
+                if (activeLeafIds.has(key)) {
+                    next[key] = prev[key];
+                } else {
+                    changed = true;
+                }
+            });
+
+            return changed ? next : prev;
+        });
+    }, [columns]);
+
     const parentRef = useRef(null);
     const expansionScrollRestoreRef = useRef(null);
     const expansionScrollRestoreRafRef = useRef(null);
@@ -2026,9 +2079,10 @@ export default function DashTanstackPivot(props) {
             columnPinning,
             rowPinning: finalRowPinning,
             grouping: rowFields,
-            columnVisibility
+            columnVisibility,
+            columnSizing
         };
-    }, [sorting, expanded, columnPinning, rowPinning, rowFields, columnVisibility, tableData, grandTotalPosition]);
+    }, [sorting, expanded, columnPinning, rowPinning, rowFields, columnVisibility, columnSizing, tableData, grandTotalPosition]);
 
 
 
@@ -2151,6 +2205,7 @@ export default function DashTanstackPivot(props) {
         onColumnPinningChange: (updater) => { debugLog('onColumnPinningChange'); setColumnPinning(updater); },
         onRowPinningChange: (updater) => { debugLog('onRowPinningChange'); setRowPinning(updater); },
         onColumnVisibilityChange: (updater) => { debugLog('onColumnVisibilityChange'); setColumnVisibility(updater); },
+        onColumnSizingChange: (updater) => { debugLog('onColumnSizingChange'); setColumnSizing(updater); },
         getRowId,
         getCoreRowModel: getCoreRowModel(),
         getExpandedRowModel: getExpandedRowModel(),
@@ -4213,6 +4268,7 @@ DashTanstackPivot.propTypes = {
     columnPinned: PropTypes.object,
     rowPinned: PropTypes.object,
     columnVisibility: PropTypes.object,
+    columnSizing: PropTypes.object,
     reset: PropTypes.any,
     persistence: PropTypes.oneOfType([PropTypes.bool, PropTypes.string, PropTypes.number]),
     persistence_type: PropTypes.oneOf(['local', 'session', 'memory']),
