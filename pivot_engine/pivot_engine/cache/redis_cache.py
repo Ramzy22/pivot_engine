@@ -1,7 +1,13 @@
 """
 Redis-based cache for pivot query results, supporting various data types including Arrow IPC format.
 """
-import redis
+try:
+    import redis
+    _REDIS_AVAILABLE = True
+except ImportError:
+    _REDIS_AVAILABLE = False
+    redis = None
+
 import pyarrow as pa
 import pyarrow.ipc as ipc
 import json
