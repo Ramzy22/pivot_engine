@@ -9,7 +9,7 @@ description = "A high-performance, scalable pivot engine optimized for millions 
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Ramzy22"}
+    {name = "Ramzy"}
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
