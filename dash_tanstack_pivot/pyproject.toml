@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dash-tanstack-pivot"
+version = "0.0.2"
+description = "A Dash component library for enterprise-grade pivot tables built with TanStack Table v8"
+license = {text = "MIT"}
+authors = [
+    {name = "Gemini"}
+]
+classifiers = [
+    "Framework :: Dash",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: User Interfaces",
+]
+keywords = ["dash", "pivot", "tanstack", "table", "analytics"]
+requires-python = ">=3.8"
+dependencies = [
+    "dash>=2.0.0",
+]
+
+[project.optional-dependencies]
+redis = [
+    "redis>=4.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "build>=0.10.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dash_tanstack_pivot*"]
+
+[tool.setuptools.package-data]
+dash_tanstack_pivot = [
+    "*.js",
+    "*.js.map",
+    "*.json",
+]
