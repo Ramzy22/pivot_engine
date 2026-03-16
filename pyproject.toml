@@ -27,12 +27,12 @@ keywords = ["pivot", "analytics", "database", "olap", "scalable", "performance"]
 dependencies = [
     "duckdb>=0.8.0",
     "pyarrow>=10.0.0",
-    "pandas>=1.5.0"
+    "pandas>=1.5.0",
+    "ibis-framework[duckdb]>=4.0.0"
 ]
 requires-python = ">=3.8"
 
 [project.optional-dependencies]
-ibis = ["ibis-framework>=4.0.0"]
 api = [
     "fastapi>=0.100.0",
     "uvicorn[standard]>=0.20.0"
