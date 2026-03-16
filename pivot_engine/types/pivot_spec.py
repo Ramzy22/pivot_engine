@@ -28,6 +28,13 @@ class Measure:
     ratio_format: str = "decimal"  # "decimal" or "percentage"
     ratio_null_value: Optional[float] = None  # Value to use when denominator is 0
 
+    # Window Function Support
+    window_func: Optional[str] = None  # "cumulative", "percent_of_total", "rank", "dense_rank", "running_avg", "moving_avg"
+    window_group_by: Optional[List[str]] = None
+    window_order_by: Optional[List[str]] = None
+    window_frame_start: Optional[int] = None
+    window_frame_end: Optional[int] = None
+
     def __post_init__(self):
         if not self.alias and self.field:
             self.alias = f"{self.agg}_{self.field.replace('.', '_')}" if self.field else self.agg
