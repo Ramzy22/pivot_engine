@@ -4,14 +4,32 @@ Supports API Key (Service-to-Service) and OAuth2/JWT (User-to-Service).
 """
 import os
 from typing import Optional, List, Dict, Any
-from fastapi import HTTPException, Security, status, Depends
-from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
-from pydantic import BaseModel
-from jose import jwt, JWTError
 
-# Define authentication schemes
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
+try:
+    from fastapi import HTTPException, Security, status, Depends
+    from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
+    _fastapi_available = True
+    api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+    oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
+except ImportError:
+    _fastapi_available = False
+    HTTPException = Security = status = Depends = None
+    api_key_header = oauth2_scheme = None
+
+try:
+    from pydantic import BaseModel
+    _pydantic_available = True
+except ImportError:
+    _pydantic_available = False
+    from dataclasses import dataclass, field
+    BaseModel = object
+
+try:
+    from jose import jwt, JWTError
+    _jose_available = True
+except ImportError:
+    _jose_available = False
+    jwt = JWTError = None
 
 # Configuration
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-jwt-secret")
@@ -23,16 +41,27 @@ class UserRole(str):
     EDITOR = "editor"
     VIEWER = "viewer"
 
-class User(BaseModel):
-    id: str
-    username: str
-    role: str
-    scopes: List[str] = []
-    attributes: Dict[str, Any] = {} # For RLS, e.g. {'region': 'North'}
+if _pydantic_available:
+    class User(BaseModel):
+        id: str
+        username: str
+        role: str
+        scopes: List[str] = []
+        attributes: Dict[str, Any] = {}
+else:
+    from dataclasses import dataclass, field as _field
+
+    @dataclass
+    class User:
+        id: str
+        username: str
+        role: str
+        scopes: List[str] = _field(default_factory=list)
+        attributes: Dict[str, Any] = _field(default_factory=dict)
 
 async def get_current_user(
-    api_key: str = Security(api_key_header),
-    token: str = Security(oauth2_scheme)
+    api_key: str = (Security(api_key_header) if _fastapi_available else None),
+    token: str = (Security(oauth2_scheme) if _fastapi_available else None)
 ) -> User:
     """
     Authenticate user via API Key or JWT Token.
@@ -101,9 +130,9 @@ def _get_dev_user():
         attributes={} 
     )
 
-from pivot_engine.types.pivot_spec import PivotSpec
+from .types.pivot_spec import PivotSpec
 
-def get_user_with_rls(user: User = Depends(get_current_user)) -> User:
+def get_user_with_rls(user: User = (Depends(get_current_user) if _fastapi_available else None)) -> User:
     """
     Dependency to get user with RLS context applied.
     """
