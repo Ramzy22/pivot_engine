@@ -92,11 +92,11 @@
 
 ### Packaging & Distribution
 
-- [ ] **PKG-01**: `pip install dash-tanstack-pivot` installs the component with zero additional config
-- [ ] **PKG-02**: Optional extras: `pip install dash-tanstack-pivot[redis]` for Redis cache
+- [x] **PKG-01**: `pip install dash-tanstack-pivot` installs the component with zero additional config
+- [x] **PKG-02**: Optional extras: `pip install dash-tanstack-pivot[redis]` for Redis cache
 - [ ] **PKG-03**: Package published to PyPI with semantic versioning
-- [ ] **PKG-04**: `dash_tanstack_pivot` Python module imports cleanly with no missing dependency errors
-- [ ] **PKG-05**: npm build (`npm run build`) produces a single minified JS bundle correctly
+- [x] **PKG-04**: `dash_tanstack_pivot` Python module imports cleanly with no missing dependency errors
+- [x] **PKG-05**: npm build (`npm run build`) produces a single minified JS bundle correctly
 
 ### Documentation & Examples
 
@@ -201,11 +201,11 @@
 | CODE-04 | Phase 8 - Code Quality Refactor | Pending |
 | QUAL-03 | Phase 8 - Code Quality Refactor | Complete |
 | QUAL-04 | Phase 8 - Code Quality Refactor | Complete |
-| PKG-01 | Phase 9 - Packaging, Docs & CI/CD | Pending |
-| PKG-02 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| PKG-01 | Phase 9 - Packaging, Docs & CI/CD | Complete |
+| PKG-02 | Phase 9 - Packaging, Docs & CI/CD | Complete |
 | PKG-03 | Phase 9 - Packaging, Docs & CI/CD | Pending |
-| PKG-04 | Phase 9 - Packaging, Docs & CI/CD | Pending |
-| PKG-05 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| PKG-04 | Phase 9 - Packaging, Docs & CI/CD | Complete |
+| PKG-05 | Phase 9 - Packaging, Docs & CI/CD | Complete |
 | DOC-01 | Phase 9 - Packaging, Docs & CI/CD | Pending |
 | DOC-02 | Phase 9 - Packaging, Docs & CI/CD | Pending |
 | DOC-03 | Phase 9 - Packaging, Docs & CI/CD | Pending |
