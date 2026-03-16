@@ -33,7 +33,7 @@ export function useColumnDefs({
     colFields,
     valConfigs,
     minMax,
-    colorScale,
+    colorScaleMode,
     colExpanded,
     isRowSelecting,
     rowDragStart,
@@ -149,7 +149,9 @@ export function useColumnDefs({
                             }
                         }}
                     >
-                        {row.index + 1 + (serverSide ? (renderedOffset || 0) : 0)}
+                        {(row.original && (row.original._isTotal || row.original._path === '__grand_total__' || row.original._id === 'Grand Total'))
+                            ? (props.rowCount != null ? props.rowCount : '∑')
+                            : (row.index + 1 + (serverSide ? (renderedOffset || 0) : 0))}
                     </div>
                 )
             });
@@ -279,18 +281,28 @@ export function useColumnDefs({
                 )
             }));
         } else if (serverSide) {
-            const keys = new Set();
-            // Prefer explicit columns from backend callback (primary, always correct)
+            // Authoritative center-column order must come from backend __col_schema.
+            // If we re-sort independently on the client, col_start/col_end indices
+            // drift from backend window slicing and cells appear blank.
+            const orderedIds = [];
+            const seenIds = new Set();
+            const pushId = (rawId) => {
+                const id = typeof rawId === 'string' ? rawId : null;
+                if (!id || id === '__col_schema' || seenIds.has(id)) return;
+                seenIds.add(id);
+                orderedIds.push(id);
+            };
+
+            if (cachedColSchema && cachedColSchema.columns && cachedColSchema.columns.length > 0) {
+                cachedColSchema.columns.forEach(c => pushId(c && c.id));
+            }
             if (props.columns && props.columns.length > 0) {
-                props.columns.filter(c => c.id !== '__col_schema').forEach(c => keys.add(c.id));
-            // Fallback: use schema derived from row data (when props.columns not yet available)
-            } else if (cachedColSchema && cachedColSchema.columns && cachedColSchema.columns.length > 0) {
-                cachedColSchema.columns.forEach(c => keys.add(c.id));
+                props.columns.forEach(c => pushId(c && c.id));
             } else if (filteredData.length > 0) {
-                filteredData.forEach(row => Object.keys(row).forEach(k => keys.add(k)));
+                filteredData.forEach(row => Object.keys(row || {}).forEach(pushId));
             }
 
-            if (keys.size > 0) {
+            if (orderedIds.length > 0) {
                 const ignoreKeys = new Set(['_id', 'depth', '_isTotal', '_path', 'uuid', ...rowFields, ...colFields]);
 
                 // Helper to determine if a column is relevant for the grid
@@ -298,7 +310,7 @@ export function useColumnDefs({
                 const measureIds = new Set(valConfigs.map(v => getKey('', v.field, v.agg)));
 
                 const flatCols = [];
-                Array.from(keys).sort().forEach(k => {
+                orderedIds.forEach(k => {
                     if (ignoreKeys.has(k)) return;
 
                     // Filter: Only show active measures, row totals, or pivoted measure columns
@@ -472,5 +484,5 @@ export function useColumnDefs({
     // cachedColSchema and filteredData changes on every viewport scroll, causing the entire column
     // tree to rebuild. filteredData is used only as a last-resort fallback (client-side, no schema).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [rowFields, colFields, valConfigs, minMax, colorScale, colExpanded, serverSide, layoutMode, showRowNumbers, isRowSelecting, rowDragStart, props.columns, cachedColSchema]);
+    }, [rowFields, colFields, valConfigs, minMax, colorScaleMode, colExpanded, serverSide, layoutMode, showRowNumbers, isRowSelecting, rowDragStart, props.columns, cachedColSchema]);
 }

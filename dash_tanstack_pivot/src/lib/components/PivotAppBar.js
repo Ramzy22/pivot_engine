@@ -2,6 +2,14 @@ import React from 'react';
 import Icons from './Icons';
 import { themes } from '../utils/styles';
 
+const COLOR_PALETTE_OPTIONS = [
+    { value: 'redGreen',   label: 'Red → Green' },
+    { value: 'greenRed',   label: 'Green → Red' },
+    { value: 'blueWhite',  label: 'Blue → White' },
+    { value: 'yellowBlue', label: 'Yellow → Blue' },
+    { value: 'orangePurp', label: 'Orange → Purple' },
+];
+
 export function PivotAppBar({
     sidebarOpen, setSidebarOpen,
     themeName, setThemeName,
@@ -11,11 +19,14 @@ export function PivotAppBar({
     showColTotals, setShowColTotals,
     spacingMode, setSpacingMode, spacingLabels,
     layoutMode, setLayoutMode,
-    colorScale, setColorScale,
+    colorScaleMode, setColorScaleMode,
+    colorPalette, setColorPalette,
     rowCount, exportPivot,
     theme, styles,
-    setFilters,
+    filters, setFilters,
+    onSaveView,
 }) {
+
     return (
         <div style={styles.appBar}>
             <div style={{display:'flex', alignItems:'center', gap:'12px'}}>
@@ -26,7 +37,20 @@ export function PivotAppBar({
             </div>
             <div style={styles.searchBox}>
                 <Icons.Search />
-                <input style={{border:'none',background:'transparent',marginLeft:'8px',outline:'none',width:'100%', color: theme.text}} placeholder="Global Search..." onChange={e=>setFilters(p=>({...p,'global':e.target.value}))}/>
+                <input
+                    style={{border:'none',background:'transparent',marginLeft:'8px',outline:'none',width:'100%', color: theme.text}}
+                    placeholder="Global Search..."
+                    value={(filters && filters.global) || ''}
+                    onChange={e => {
+                        const val = e.target.value;
+                        setFilters(p => {
+                            const next = {...p};
+                            if (val) next.global = val;
+                            else delete next.global;
+                            return next;
+                        });
+                    }}
+                />
             </div>
             <div style={{display:'flex',gap:'8px'}}>
                 <button style={{...styles.btn, background: showRowNumbers ? theme.select : 'transparent'}} onClick={() => setShowRowNumbers(!showRowNumbers)}>Row #</button>
@@ -39,7 +63,42 @@ export function PivotAppBar({
                 <button style={{...styles.btn, background: theme.hover}} onClick={() => setLayoutMode(prev => prev === 'hierarchy' ? 'outline' : prev === 'outline' ? 'tabular' : 'hierarchy')}>
                     {layoutMode === 'hierarchy' ? 'Hierarchy' : layoutMode === 'outline' ? 'Outline' : 'Tabular'}
                 </button>
-                <button style={{...styles.btn, background: colorScale ? theme.select : 'transparent'}} onClick={() => setColorScale(!colorScale)}>Color Scale</button>
+                <select
+                    value={colorScaleMode}
+                    onChange={e => setColorScaleMode(e.target.value)}
+                    title="Color scale mode"
+                    style={{
+                        ...styles.btn,
+                        background: colorScaleMode !== 'off' ? theme.select : theme.hover,
+                        outline: 'none',
+                        cursor: 'pointer',
+                        padding: '4px 8px',
+                    }}
+                >
+                    <option value="off">Color: Off</option>
+                    <option value="row">Color: By Row</option>
+                    <option value="col">Color: By Column</option>
+                    <option value="table">Color: By Table</option>
+                </select>
+                {colorScaleMode !== 'off' && (
+                    <select
+                        value={colorPalette}
+                        onChange={e => setColorPalette(e.target.value)}
+                        title="Color palette"
+                        style={{
+                            ...styles.btn,
+                            background: theme.select,
+                            outline: 'none',
+                            cursor: 'pointer',
+                            padding: '4px 8px',
+                        }}
+                    >
+                        {COLOR_PALETTE_OPTIONS.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                    </select>
+                )}
+                <button style={{...styles.btn, background: theme.hover}} onClick={onSaveView}>Save View</button>
 
                 <div style={{width: '1px', height: '20px', background: theme.border, margin: '0 4px'}} />
                 <select value={themeName} onChange={e => setThemeName(e.target.value)} style={{...styles.btn, background: theme.hover, padding: '4px 8px', outline: 'none'}}>

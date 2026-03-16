@@ -79,6 +79,122 @@ async def test_max_aggregation_is_server_side(adapter):
 
 
 @pytest.mark.asyncio
+async def test_count_aggregation_works_with_pivot_columns(adapter):
+    request = TanStackRequest(
+        operation=TanStackOperation.GET_DATA,
+        table="test",
+        columns=[
+            {"id": "region"},
+            {"id": "product"},
+            {"id": "sales_count", "aggregationField": "sales", "aggregationFn": "count"},
+        ],
+        filters={},
+        sorting=[],
+        grouping=["region"],
+        aggregations=[],
+    )
+
+    response = await adapter.handle_request(request)
+    north = _find_group_row(response.data, "North")
+
+    assert north is not None
+    assert north["Laptop_sales_count"] == 1
+    assert north["Phone_sales_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_percent_of_row_window_works_with_pivot_columns(adapter):
+    request = TanStackRequest(
+        operation=TanStackOperation.GET_DATA,
+        table="test",
+        columns=[
+            {"id": "region"},
+            {"id": "product"},
+            {
+                "id": "sales_sum",
+                "aggregationField": "sales",
+                "aggregationFn": "sum",
+                "windowFn": "percent_of_row",
+            },
+        ],
+        filters={},
+        sorting=[],
+        grouping=["region"],
+        aggregations=[],
+        row_totals=True,
+    )
+
+    response = await adapter.handle_request(request)
+    north = _find_group_row(response.data, "North")
+
+    assert north is not None
+    assert north["Laptop_sales_sum"] == pytest.approx(100 / 300)
+    assert north["Phone_sales_sum"] == pytest.approx(200 / 300)
+    assert north["__RowTotal__sales_sum"] == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_percent_of_col_window_works_with_pivot_columns(adapter):
+    request = TanStackRequest(
+        operation=TanStackOperation.GET_DATA,
+        table="test",
+        columns=[
+            {"id": "region"},
+            {"id": "product"},
+            {
+                "id": "sales_sum",
+                "aggregationField": "sales",
+                "aggregationFn": "sum",
+                "windowFn": "percent_of_col",
+            },
+        ],
+        filters={},
+        sorting=[],
+        grouping=["region"],
+        aggregations=[],
+    )
+
+    response = await adapter.handle_request(request)
+    north = _find_group_row(response.data, "North")
+    south = _find_group_row(response.data, "South")
+
+    assert north is not None and south is not None
+    assert north["Laptop_sales_sum"] == pytest.approx(100 / 400)
+    assert south["Laptop_sales_sum"] == pytest.approx(300 / 400)
+    assert north["Phone_sales_sum"] == pytest.approx(200 / 250)
+    assert south["Phone_sales_sum"] == pytest.approx(50 / 250)
+
+
+@pytest.mark.asyncio
+async def test_percent_of_grand_total_alias_is_supported(adapter):
+    request = TanStackRequest(
+        operation=TanStackOperation.GET_DATA,
+        table="test",
+        columns=[
+            {"id": "region"},
+            {
+                "id": "sales_sum",
+                "aggregationField": "sales",
+                "aggregationFn": "sum",
+                "windowFn": "percent_of_grand_total",
+            },
+        ],
+        filters={},
+        sorting=[],
+        grouping=["region"],
+        aggregations=[],
+    )
+
+    response = await adapter.handle_request(request)
+    north = _find_group_row(response.data, "North")
+    south = _find_group_row(response.data, "South")
+
+    assert north is not None and south is not None
+    assert north["sales_sum"] == pytest.approx(300 / 650)
+    assert south["sales_sum"] == pytest.approx(350 / 650)
+
+
+@pytest.mark.asyncio
 async def test_row_fields_group_output_round_trip(adapter):
     request = TanStackRequest(
         operation=TanStackOperation.GET_DATA,

@@ -182,3 +182,12 @@ data/
 # Python virtual environments
 venv*/
 env*/
+# Node
+node_modules/
+
+# IDE
+.vs/
+
+# AI assistant internals
+.claude/
+.codex/

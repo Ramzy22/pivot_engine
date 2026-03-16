@@ -21,6 +21,7 @@ import { mergeStateStyles } from '../utils/styles';
  */
 export function useRenderHelpers({
     // renderCell dependencies
+    serverSide,
     selectedCells,
     fillRange,
     dragStart,
@@ -84,17 +85,15 @@ export function useRenderHelpers({
         const rowBackground = (row.original && row.original._isTotal)
             ? (isDarkTheme(theme) ? '#1a2e1a' : '#f0f7f0')
             : (isDarkTheme(theme) ? '#212121' : '#fff');
-        const condStyle = getConditionalStyle(cell.column.id, cell.getValue());
-        const sortedBodyStyle = col.getIsSorted?.()
-            ? {
-                background: theme.sortedHeaderBg || theme.select,
-                color: theme.sortedHeaderText || theme.text
-            }
-            : {};
+        const condStyle = getConditionalStyle(
+            cell.column.id,
+            cell.getValue(),
+            row.original,
+            row.id
+        );
         const stickyBaseStyle = mergeStateStyles(
             { background: rowBackground },
-            condStyle,
-            sortedBodyStyle
+            condStyle
         );
         const stickyStyle = getStickyStyle(cell.column, stickyBaseStyle.background);
         const selectedOverlayStyle = isSelected
@@ -127,7 +126,34 @@ export function useRenderHelpers({
                 ? row.original.__virtualIndex + 1
                 : virtualRowIndex + 1;
         } else {
-            cellContent = flexRender(cell.column.columnDef.cell, cell.getContext());
+            const rowData = row.original || {};
+            const hasFetchedColumn = Object.prototype.hasOwnProperty.call(rowData, cell.column.id);
+            const showPendingColumnPlaceholder = (
+                serverSide &&
+                !!rowData.__colPending &&
+                !isHierarchy &&
+                cell.column.id !== '__row_number__' &&
+                !hasFetchedColumn
+            );
+
+            if (showPendingColumnPlaceholder) {
+                cellContent = (
+                    <span
+                        aria-hidden="true"
+                        style={{
+                            width: '70%',
+                            maxWidth: '120px',
+                            height: '10px',
+                            borderRadius: '999px',
+                            background: 'var(--pivot-loading-cell-gradient, linear-gradient(90deg, rgba(232,242,255,0.7) 0%, rgba(190,218,255,0.94) 45%, rgba(232,242,255,0.7) 100%))',
+                            backgroundSize: '220% 100%',
+                            animation: 'pivot-skeleton-shimmer var(--pivot-loading-shimmer-duration, 2.8s) linear infinite'
+                        }}
+                    />
+                );
+            } else {
+                cellContent = flexRender(cell.column.columnDef.cell, cell.getContext());
+            }
         }
 
         return (
@@ -171,7 +197,23 @@ export function useRenderHelpers({
                 )}
             </div>
         );
-    }, [selectedCells, fillRange, theme, getStickyStyle, handleCellMouseDown, handleCellMouseEnter, handleContextMenu, handleFillMouseDown, isDarkTheme]);
+    }, [
+        serverSide,
+        selectedCells,
+        fillRange,
+        dragStart,
+        theme,
+        getStickyStyle,
+        isDarkTheme,
+        handleCellMouseDown,
+        handleCellMouseEnter,
+        handleContextMenu,
+        handleFillMouseDown,
+        visibleLeafColIndexMap,
+        lastSelected,
+        styles,
+        getConditionalStyle,
+    ]);
 
     // NEW: Render Header Cell for Split Sections
     // overrideWidth: when set, replaces the computed section width (used for partially-visible

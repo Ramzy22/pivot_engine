@@ -73,8 +73,8 @@ const loadingAnimationStyles = `
     to { opacity: 1; transform: translateY(0); }
 }
 @keyframes pivot-skeleton-shimmer {
-    0% { background-position: 180% 0; }
-    100% { background-position: -180% 0; }
+    0% { background-position: 220% 0; }
+    100% { background-position: -220% 0; }
 }
 @keyframes pivot-spinner-rotate {
     from { transform: rotate(0deg); }
@@ -120,6 +120,7 @@ export default function DashTanstackPivot(props) {
         dataOffset = 0,
         dataVersion = 0,
         drillEndpoint = '/api/drill-through',
+        viewState = null,
     } = props;
 
 
@@ -154,6 +155,26 @@ export default function DashTanstackPivot(props) {
         const [themeName, setThemeName] = useState('light');
         const theme = useMemo(() => themes[themeName], [themeName]);
         const styles = useMemo(() => getStyles(theme), [theme]);
+        const loadingCssVars = useMemo(() => {
+            if (isDarkTheme(theme)) {
+                return {
+                    '--pivot-loading-header-gradient': 'linear-gradient(90deg, rgba(57,88,132,0.62) 0%, rgba(88,126,178,0.9) 48%, rgba(57,88,132,0.62) 100%)',
+                    '--pivot-loading-cell-gradient': 'linear-gradient(90deg, rgba(50,77,116,0.58) 0%, rgba(82,118,170,0.86) 45%, rgba(50,77,116,0.58) 100%)',
+                    '--pivot-loading-row-gradient': 'linear-gradient(90deg, rgba(35,53,82,0.88) 0%, rgba(49,74,112,0.95) 50%, rgba(35,53,82,0.88) 100%)',
+                    '--pivot-loading-border': 'rgba(130, 165, 215, 0.45)',
+                    '--pivot-loading-progress-gradient': 'linear-gradient(90deg, rgba(120,170,240,0) 0%, rgba(140,190,255,0.92) 45%, rgba(120,170,240,0) 100%)',
+                    '--pivot-loading-shimmer-duration': '2.8s',
+                };
+            }
+            return {
+                '--pivot-loading-header-gradient': 'linear-gradient(90deg, rgba(233,243,255,0.92) 0%, rgba(193,220,255,0.98) 48%, rgba(233,243,255,0.92) 100%)',
+                '--pivot-loading-cell-gradient': 'linear-gradient(90deg, rgba(232,242,255,0.7) 0%, rgba(190,218,255,0.94) 45%, rgba(232,242,255,0.7) 100%)',
+                '--pivot-loading-row-gradient': 'linear-gradient(90deg, rgba(246,250,255,0.96) 0%, rgba(228,241,255,0.98) 50%, rgba(246,250,255,0.96) 100%)',
+                '--pivot-loading-border': 'rgba(153, 187, 238, 0.5)',
+                '--pivot-loading-progress-gradient': 'linear-gradient(90deg, rgba(75,139,245,0) 0%, rgba(75,139,245,0.9) 45%, rgba(75,139,245,0) 100%)',
+                '--pivot-loading-shimmer-duration': '2.8s',
+            };
+        }, [theme]);
 
         const [rowFields, setRowFields] = useState(initialRowFields);
         const [colFields, setColFields] = useState(initialColFields);
@@ -249,7 +270,8 @@ export default function DashTanstackPivot(props) {
         return () => window.removeEventListener('keydown', handleGlobalKeyDown);
     }, []);
 
-    const [colorScale, setColorScale] = useState(false);
+    const [colorScaleMode, setColorScaleMode] = useState('off');
+    const [colorPalette, setColorPalette] = useState('redGreen');
     const [spacingMode, setSpacingMode] = useState(0);
     const spacingLabels = gridDimensionTokens.density.spacingLabels;
     const rowHeights = gridDimensionTokens.density.rowHeights;
@@ -288,6 +310,60 @@ export default function DashTanstackPivot(props) {
     const handleRefresh = () => {
         if (setProps) setProps({ refresh: Date.now() });
     };
+
+    useEffect(() => {
+        if (!viewState || typeof viewState !== 'object') return;
+        const restored = (viewState.state && typeof viewState.state === 'object')
+            ? viewState.state
+            : viewState;
+
+        const sanitizedFilters = (() => {
+            if (!restored.filters || typeof restored.filters !== 'object') return null;
+            const next = { ...restored.filters };
+            delete next.__request_unique__;
+            return next;
+        })();
+
+        if (Array.isArray(restored.rowFields)) setRowFields(restored.rowFields);
+        if (Array.isArray(restored.colFields)) setColFields(restored.colFields);
+        if (Array.isArray(restored.valConfigs)) setValConfigs(restored.valConfigs);
+        if (sanitizedFilters) setFilters(sanitizedFilters);
+        if (Array.isArray(restored.sorting)) setSorting(restored.sorting);
+        if (restored.expanded && typeof restored.expanded === 'object') setExpanded(restored.expanded);
+        if (typeof restored.showRowTotals === 'boolean') setShowRowTotals(restored.showRowTotals);
+        if (typeof restored.showColTotals === 'boolean') setShowColTotals(restored.showColTotals);
+        if (typeof restored.showRowNumbers === 'boolean') setShowRowNumbers(restored.showRowNumbers);
+        if (typeof restored.sidebarOpen === 'boolean') setSidebarOpen(restored.sidebarOpen);
+        if (typeof restored.sidebarTab === 'string') setSidebarTab(restored.sidebarTab);
+        if (typeof restored.showFloatingFilters === 'boolean') setShowFloatingFilters(restored.showFloatingFilters);
+        if (typeof restored.colSearch === 'string') setColSearch(restored.colSearch);
+        if (typeof restored.colTypeFilter === 'string') setColTypeFilter(restored.colTypeFilter);
+        if (typeof restored.themeName === 'string' && themes[restored.themeName]) setThemeName(restored.themeName);
+        if (typeof restored.layoutMode === 'string') setLayoutMode(restored.layoutMode);
+        if (typeof restored.colorScaleMode === 'string') setColorScaleMode(restored.colorScaleMode);
+        if (typeof restored.spacingMode === 'number') setSpacingMode(restored.spacingMode);
+        if (restored.columnPinning && typeof restored.columnPinning === 'object') setColumnPinning(restored.columnPinning);
+        if (restored.rowPinning && typeof restored.rowPinning === 'object') setRowPinning(restored.rowPinning);
+        if (restored.columnVisibility && typeof restored.columnVisibility === 'object') setColumnVisibility(restored.columnVisibility);
+        if (restored.columnSizing && typeof restored.columnSizing === 'object') setColumnSizing(restored.columnSizing);
+        if (restored.colExpanded && typeof restored.colExpanded === 'object') setColExpanded(restored.colExpanded);
+
+        if (viewState.viewport && typeof viewState.viewport === 'object') {
+            latestViewportRef.current = {
+                ...latestViewportRef.current,
+                ...viewState.viewport,
+            };
+        }
+
+        const savedScroll = restored.scroll && typeof restored.scroll === 'object' ? restored.scroll : null;
+        if (savedScroll && parentRef.current) {
+            requestAnimationFrame(() => {
+                if (!parentRef.current) return;
+                if (typeof savedScroll.top === 'number') parentRef.current.scrollTop = savedScroll.top;
+                if (typeof savedScroll.left === 'number') parentRef.current.scrollLeft = savedScroll.left;
+            });
+        }
+    }, [viewState]);
 
     // Clipboard Paste
     useEffect(() => {
@@ -329,7 +405,7 @@ export default function DashTanstackPivot(props) {
         return true;
     };
 
-    const getConditionalStyle = (colId, value) => {
+    const getRuleBasedStyle = (colId, value) => {
         if (typeof value !== 'number') return {};
         const rules = conditionalFormatting.filter(r => r.column === colId || !r.column);
         let style = {};
@@ -601,9 +677,12 @@ export default function DashTanstackPivot(props) {
     const clientInstanceRef = useRef(createClientInstanceId(id || 'pivot-grid'));
     const requestVersionRef = useRef(Number(dataVersion) || 0);
     const latestDataVersionRef = useRef(Number(dataVersion) || 0);
+    const pendingRequestVersionsRef = useRef(new Set());
+    const loadingDelayTimerRef = useRef(null);
     const stateEpochRef = useRef(0);
     const abortGenerationRef = useRef(0);
     const structuralPendingVersionRef = useRef(null);
+    const expandAllDebounceRef = useRef(false);
     const latestViewportRef = useRef({ start: 0, end: 99, count: 100 });
     const [stateEpoch, setStateEpoch] = useState(0);
     const [cachedColSchema, setCachedColSchema] = useState(null);
@@ -616,6 +695,21 @@ export default function DashTanstackPivot(props) {
     const [structuralInFlight, setStructuralInFlight] = useState(false);
     const [pendingRowTransitions, setPendingRowTransitions] = useState(() => new Map());
     const [pendingColumnSkeletonCount, setPendingColumnSkeletonCount] = useState(0);
+    const [isRequestPending, setIsRequestPending] = useState(false);
+
+    const markRequestPending = useCallback((version) => {
+        const numericVersion = Number(version);
+        if (Number.isFinite(numericVersion)) {
+            pendingRequestVersionsRef.current.add(numericVersion);
+        }
+        if (isRequestPending || loadingDelayTimerRef.current !== null) return;
+        loadingDelayTimerRef.current = setTimeout(() => {
+            loadingDelayTimerRef.current = null;
+            if (pendingRequestVersionsRef.current.size > 0) {
+                setIsRequestPending(true);
+            }
+        }, 200);
+    }, [isRequestPending]);
 
     useEffect(() => {
         const numericVersion = Number(dataVersion);
@@ -624,7 +718,37 @@ export default function DashTanstackPivot(props) {
         if (numericVersion > requestVersionRef.current) {
             requestVersionRef.current = numericVersion;
         }
+        for (const pendingVersion of Array.from(pendingRequestVersionsRef.current)) {
+            if (pendingVersion <= numericVersion) {
+                pendingRequestVersionsRef.current.delete(pendingVersion);
+            }
+        }
+        if (pendingRequestVersionsRef.current.size === 0) {
+            if (loadingDelayTimerRef.current !== null) {
+                clearTimeout(loadingDelayTimerRef.current);
+                loadingDelayTimerRef.current = null;
+            }
+            setIsRequestPending(false);
+        }
     }, [dataVersion]);
+
+    useEffect(() => {
+        return () => {
+            if (loadingDelayTimerRef.current !== null) {
+                clearTimeout(loadingDelayTimerRef.current);
+                loadingDelayTimerRef.current = null;
+            }
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!isRequestPending) return;
+        const timeoutId = setTimeout(() => {
+            pendingRequestVersionsRef.current.clear();
+            setIsRequestPending(false);
+        }, 15000);
+        return () => clearTimeout(timeoutId);
+    }, [isRequestPending]);
 
     // Clear schema on structural change so we re-derive from fresh data
     useEffect(() => {
@@ -673,24 +797,18 @@ export default function DashTanstackPivot(props) {
         }
     }, [serverSide, filteredData, cachedColSchema, stateEpoch, rowFields, colFields, defaultColumnWidths.schemaFallback]);
 
-    // Compute column request window and store in refs for use in field-zone effect
-    const COL_BLOCK_SIZE = 20;
-    const COL_OVERSCAN = 1; // extra col blocks to prefetch on each side
-
     const needsColSchema = !cachedColSchema || colSchemaEpochRef.current !== stateEpoch;
     const totalCenterCols = cachedColSchema ? cachedColSchema.total_center_cols : null;
 
-    // Only window columns once we have the schema and are in server-side mode.
-    // When needsColSchema is true we fetch all cols to get the schema.
-    // Guard uses totalCenterCols !== null (not visibleColRange.end > 0) so that windowing
-    // also activates when only column index 0 is visible (end === 0 would falsely disable it).
+    // Strict visible-only request window: request exactly the currently visible center range.
+    // Before schema is known, request full payload once to populate __col_schema.
     const colRequestStart = (serverSide && cachedColSchema && !needsColSchema && totalCenterCols !== null)
-        ? Math.max(0, (Math.floor(visibleColRange.start / COL_BLOCK_SIZE) - COL_OVERSCAN) * COL_BLOCK_SIZE)
+        ? Math.max(0, visibleColRange.start)
         : null;
 
     const colRequestEnd = (serverSide && cachedColSchema && !needsColSchema && totalCenterCols !== null)
         ? Math.min(totalCenterCols - 1,
-            (Math.floor(visibleColRange.end / COL_BLOCK_SIZE) + 1 + COL_OVERSCAN) * COL_BLOCK_SIZE - 1)
+            visibleColRange.end)
         : null;
 
     // Keep refs in sync for use in field-zone effect closures
@@ -740,6 +858,80 @@ export default function DashTanstackPivot(props) {
         setPropsRef.current = setProps;
     }, [setProps]);
 
+    const buildCurrentViewState = useCallback(() => {
+        const normalizedFilters = (() => {
+            const next = { ...(filters || {}) };
+            delete next.__request_unique__;
+            return next;
+        })();
+        return {
+            version: 1,
+            table: tableName || null,
+            viewport: latestViewportRef.current || null,
+            state: {
+                rowFields,
+                colFields,
+                valConfigs,
+                filters: normalizedFilters,
+                sorting,
+                expanded,
+                showRowTotals,
+                showColTotals,
+                showRowNumbers,
+                sidebarOpen,
+                sidebarTab,
+                showFloatingFilters,
+                colSearch,
+                colTypeFilter,
+                themeName,
+                layoutMode,
+                colorScaleMode,
+                spacingMode,
+                columnPinning,
+                rowPinning,
+                columnVisibility,
+                columnSizing,
+                colExpanded,
+                scroll: parentRef.current
+                    ? { top: parentRef.current.scrollTop, left: parentRef.current.scrollLeft }
+                    : null,
+            }
+        };
+    }, [
+        tableName,
+        rowFields,
+        colFields,
+        valConfigs,
+        filters,
+        sorting,
+        expanded,
+        showRowTotals,
+        showColTotals,
+        showRowNumbers,
+        sidebarOpen,
+        sidebarTab,
+        showFloatingFilters,
+        colSearch,
+        colTypeFilter,
+        themeName,
+        layoutMode,
+        colorScaleMode,
+        spacingMode,
+        columnPinning,
+        rowPinning,
+        columnVisibility,
+        columnSizing,
+        colExpanded,
+    ]);
+
+    const handleSaveView = useCallback(() => {
+        const snapshot = buildCurrentViewState();
+        if (setPropsRef.current) {
+            setPropsRef.current({ savedView: snapshot });
+        }
+        showNotification('View snapshot saved', 'success');
+    }, [buildCurrentViewState, showNotification]);
+
     const lastPropsRef = useRef({
         rowFields: initialRowFields,
         colFields: initialColFields,
@@ -762,11 +954,12 @@ export default function DashTanstackPivot(props) {
         };
         const colFieldsChanged = JSON.stringify(nextProps.colFields) !== JSON.stringify(lastPropsRef.current.colFields);
 
-        const changed = Object.keys(nextProps).some(key => {
+        const changedKeys = Object.keys(nextProps).filter(key => {
             const val = nextProps[key];
             const lastVal = lastPropsRef.current[key];
             return JSON.stringify(val) !== JSON.stringify(lastVal);
         });
+        const changed = changedKeys.length > 0;
 
         if (setPropsRef.current && changed) {
             debugLog('Sync to Dash Triggered', nextProps);
@@ -777,11 +970,20 @@ export default function DashTanstackPivot(props) {
             // pendingRowTransitions, and the viewport snaps in place.
             const structuralKeys = ['rowFields', 'colFields', 'valConfigs', 'filters', 'sorting',
                 'showRowTotals', 'showColTotals', 'columnPinning', 'rowPinning', 'columnVisibility', 'columnSizing'];
+            const uiOnlyKeys = new Set(['columnPinning', 'rowPinning', 'columnVisibility', 'columnSizing']);
             const isExpansionOnly = serverSide && structuralKeys.every(
                 key => JSON.stringify(nextProps[key]) === JSON.stringify(lastPropsRef.current[key])
             );
+            const isUiOnlyChange = changedKeys.length > 0 && changedKeys.every(key => uiOnlyKeys.has(key));
 
             lastPropsRef.current = nextProps;
+
+            // Column resize/pin/visibility are local UI concerns and should not
+            // trigger backend loading or viewport fetches.
+            if (isUiOnlyChange) {
+                setPropsRef.current(nextProps);
+                return;
+            }
 
             if (isExpansionOnly) {
                 // Cancel any pending scroll restore — the viewport stays exactly in place.
@@ -791,6 +993,7 @@ export default function DashTanstackPivot(props) {
                     expansionScrollRestoreRafRef.current = null;
                 }
                 const tx = beginExpansionRequest();
+                markRequestPending(tx.version);
                 const viewportSnapshot = latestViewportRef.current || { start: 0, end: 99, count: 100 };
 
                 // Extend the row window to cover the block immediately after the anchor block.
@@ -830,7 +1033,8 @@ export default function DashTanstackPivot(props) {
                         intent: 'expansion',
                         col_start: colRequestStartRef.current !== null ? colRequestStartRef.current : undefined,
                         col_end: colRequestEndRef.current !== null ? colRequestEndRef.current : undefined,
-                        needs_col_schema: needsColSchemaRef.current && serverSide || undefined
+                        needs_col_schema: needsColSchemaRef.current && serverSide || undefined,
+                        include_grand_total: (serverSide && showColTotals) || undefined,
                     }
                 });
                 return;
@@ -845,6 +1049,7 @@ export default function DashTanstackPivot(props) {
                 setPendingColumnSkeletonCount(0);
             }
             const tx = beginStructuralTransaction();
+            markRequestPending(tx.version);
             const viewportSnapshot = latestViewportRef.current || { start: 0, end: 99, count: 100 };
             setPropsRef.current({
                 ...nextProps,
@@ -860,7 +1065,8 @@ export default function DashTanstackPivot(props) {
                     client_instance: clientInstanceRef.current,
                     abort_generation: tx.abortGeneration,
                     intent: 'structural',
-                    needs_col_schema: serverSide || undefined
+                    needs_col_schema: serverSide || undefined,
+                    include_grand_total: (serverSide && showColTotals) || undefined,
                 }
             });
         }
@@ -1259,7 +1465,16 @@ export default function DashTanstackPivot(props) {
         });
     };
 
-    const filteredData = useFilteredData(data, filters, serverSide);
+    // Extract color scale stats sentinel injected by the server, strip it from rows
+    const { cleanData, serverColorScaleStats } = useMemo(() => {
+        const sentinelIdx = data.findIndex(r => r && r._path === '__color_scale_stats__');
+        if (sentinelIdx === -1) return { cleanData: data, serverColorScaleStats: null };
+        const stats = data[sentinelIdx]._colorScaleStats || null;
+        const rows = data.filter((_, i) => i !== sentinelIdx);
+        return { cleanData: rows, serverColorScaleStats: stats };
+    }, [data]);
+
+    const filteredData = useFilteredData(cleanData, filters, serverSide);
 
     const staticTotal = useMemo(() => ({ _isTotal: true, _path: '__grand_total__', _id: 'Grand Total', __isGrandTotal__: true }), []);
     const staticMinMax = useMemo(() => ({}), []);
@@ -1402,6 +1617,7 @@ export default function DashTanstackPivot(props) {
 
     const serverSidePinsGrandTotal = serverSide && showColTotals;
     const effectiveRowCount = serverSidePinsGrandTotal && rowCount ? Math.max(rowCount - 1, 0) : rowCount;
+    const statusRowCount = serverSidePinsGrandTotal && rowCount ? Math.max(rowCount - 1, 0) : rowCount;
 
     const captureExpansionScrollPosition = useCallback(() => {
         if (!serverSide || !parentRef.current) return;
@@ -1433,6 +1649,7 @@ export default function DashTanstackPivot(props) {
         colStart: colRequestStart,
         colEnd: colRequestEnd,
         needsColSchema: needsColSchema && serverSide,
+        onViewportRequest: markRequestPending,
     });
 
     const columns = useColumnDefs({
@@ -1444,7 +1661,7 @@ export default function DashTanstackPivot(props) {
         colFields,
         valConfigs,
         minMax,
-        colorScale,
+        colorScaleMode,
         colExpanded,
         isRowSelecting,
         rowDragStart,
@@ -1520,6 +1737,131 @@ export default function DashTanstackPivot(props) {
 
         return baseData;
     }, [nodes, total, filteredData, serverSide, showColTotals, renderedData, grandTotalRow]);
+
+    // Color scale palettes: [lowColor, highColor, darkTextLow, darkTextHigh]
+    const COLOR_PALETTES = {
+        redGreen:   { low: [248,105,107], high: [99,190,123],  darkLow: '#5c0001', darkHigh: '#1a4d2a' },
+        greenRed:   { low: [99,190,123],  high: [248,105,107], darkLow: '#1a4d2a', darkHigh: '#5c0001' },
+        blueWhite:  { low: [65,105,225],  high: [255,255,255], darkLow: '#0d2b6e', darkHigh: '#333'    },
+        yellowBlue: { low: [255,220,0],   high: [30,90,200],   darkLow: '#5a4700', darkHigh: '#0a2a6e' },
+        orangePurp: { low: [255,140,0],   high: [120,50,200],  darkLow: '#5c3000', darkHigh: '#2a0060' },
+    };
+
+    // Client-side stats (non-server mode): exclude totals and row/col fields
+    const clientColorScaleStats = useMemo(() => {
+        if (serverSide) return { byCol: {}, byRow: {}, table: null };
+        const metaKeys = new Set([
+            '_id', '_path', '_isTotal', 'depth', '_depth', '_level', '_expanded',
+            '_parentPath', '_has_children', '_is_expanded', 'subRows', 'uuid', '__virtualIndex'
+        ]);
+        rowFields.forEach(f => metaKeys.add(f));
+        colFields.forEach(f => metaKeys.add(f));
+
+        const byCol = {};
+        const byRow = {};
+        let tableMin = Number.POSITIVE_INFINITY;
+        let tableMax = Number.NEGATIVE_INFINITY;
+
+        tableData.forEach((row, idx) => {
+            if (!row || typeof row !== 'object') return;
+            // Skip all total rows
+            if (row._isTotal || row._path === '__grand_total__' || row._id === 'Grand Total') return;
+
+            const rowKey = String(row._path || row._id || idx);
+            let rowMin = Number.POSITIVE_INFINITY;
+            let rowMax = Number.NEGATIVE_INFINITY;
+
+            Object.entries(row).forEach(([key, raw]) => {
+                if (metaKeys.has(key)) return;
+                if (typeof raw !== 'number' || Number.isNaN(raw)) return;
+
+                if (!byCol[key]) {
+                    byCol[key] = { min: raw, max: raw };
+                } else {
+                    byCol[key].min = Math.min(byCol[key].min, raw);
+                    byCol[key].max = Math.max(byCol[key].max, raw);
+                }
+
+                rowMin = Math.min(rowMin, raw);
+                rowMax = Math.max(rowMax, raw);
+                tableMin = Math.min(tableMin, raw);
+                tableMax = Math.max(tableMax, raw);
+            });
+
+            if (Number.isFinite(rowMin) && Number.isFinite(rowMax)) {
+                byRow[rowKey] = { min: rowMin, max: rowMax };
+            }
+        });
+
+        return {
+            byCol,
+            byRow,
+            table: Number.isFinite(tableMin) && Number.isFinite(tableMax)
+                ? { min: tableMin, max: tableMax }
+                : null,
+        };
+    }, [tableData, rowFields, colFields, serverSide]);
+
+    // Use server-provided stats in server mode, client-computed stats otherwise
+    const colorScaleStats = serverSide && serverColorScaleStats ? serverColorScaleStats : clientColorScaleStats;
+
+    const getConditionalStyle = useCallback((colId, value, rowData, rowId) => {
+        const ruleStyle = getRuleBasedStyle(colId, value);
+        if (colorScaleMode === 'off' || typeof value !== 'number' || Number.isNaN(value)) {
+            return ruleStyle;
+        }
+        // Skip total rows in color scale
+        if (rowData && (rowData._isTotal || rowData._path === '__grand_total__' || rowData._id === 'Grand Total')) {
+            return ruleStyle;
+        }
+
+        let stats = null;
+        if (colorScaleMode === 'col') {
+            stats = (colorScaleStats.byCol && colorScaleStats.byCol[colId]) || null;
+        } else if (colorScaleMode === 'row') {
+            const rowKey = String((rowData && rowData._path) || rowId || '');
+            stats = (colorScaleStats.byRow && colorScaleStats.byRow[rowKey]) || null;
+        } else if (colorScaleMode === 'table') {
+            stats = colorScaleStats.table || null;
+        }
+
+        if (!stats || !Number.isFinite(stats.min) || !Number.isFinite(stats.max) || stats.max === stats.min) {
+            return ruleStyle;
+        }
+
+        const palette = COLOR_PALETTES[colorPalette] || COLOR_PALETTES.redGreen;
+        const { low, high, darkLow, darkHigh } = palette;
+
+        // Handle zero-crossing: when data spans negative and positive,
+        // use 0 as the neutral (transparent) midpoint
+        let posInRange; // 0=low extreme, 1=high extreme, 0.5=neutral
+        const hasZeroCrossing = stats.min < 0 && stats.max > 0;
+        if (hasZeroCrossing) {
+            // Map negative values [min,0] → [0,0.5] and positive [0,max] → [0.5,1]
+            if (value <= 0) {
+                posInRange = 0.5 * (value - stats.min) / (0 - stats.min);
+            } else {
+                posInRange = 0.5 + 0.5 * value / stats.max;
+            }
+        } else {
+            posInRange = (value - stats.min) / (stats.max - stats.min);
+        }
+        const clamped = Math.max(0, Math.min(1, posInRange));
+
+        // Transparency: fully transparent at midpoint (0.5), max opacity at extremes
+        // alpha range 0.06 → 0.82 for a clean gradient feel
+        const distFromMid = Math.abs(clamped - 0.5) * 2; // 0 at mid, 1 at extremes
+        const alpha = 0.06 + distFromMid * 0.76;
+
+        const [r, g, b] = clamped <= 0.5 ? low : high;
+        const darkText = clamped <= 0.5 ? darkLow : darkHigh;
+
+        const heatStyle = {
+            backgroundColor: `rgba(${r},${g},${b},${alpha.toFixed(3)})`,
+            color: alpha > 0.55 ? darkText : undefined,
+        };
+        return { ...heatStyle, ...ruleStyle };
+    }, [colorScaleMode, colorPalette, colorScaleStats, getRuleBasedStyle]);
 
     const getRowId = useCallback((row, relativeIndex) => {
         if (!row) return `skeleton_${relativeIndex}`; // Handle skeleton rows
@@ -1631,6 +1973,13 @@ export default function DashTanstackPivot(props) {
 
 
     const handleExpandAllRows = (shouldExpand) => {
+        // Guard against rapid double-clicks: second click before server responds
+        // would call clearCache() again but the net expanded state change may be
+        // batched away by React, leaving the cache empty with no request sent.
+        if (expandAllDebounceRef.current) return;
+        expandAllDebounceRef.current = true;
+        setTimeout(() => { expandAllDebounceRef.current = false; }, 800);
+
         if (serverSide) {
             captureExpansionScrollPosition();
             // Expanding/collapsing ALL rows changes every row index — full cache wipe.
@@ -2031,7 +2380,7 @@ export default function DashTanstackPivot(props) {
 
     // 1. Row Virtualizer (Managed by useServerSideRowModel)
     const virtualRows = rowVirtualizer.getVirtualItems();
-    const showColumnLoadingSkeletons = serverSide && structuralInFlight && pendingColumnSkeletonCount > 0;
+    const showColumnLoadingSkeletons = serverSide && (structuralInFlight || isRequestPending) && pendingColumnSkeletonCount > 0;
     const columnSkeletonWidth = defaultColumnWidths.schemaFallback;
     const stickyHeaderHeight = getStickyHeaderHeight(table.getHeaderGroups().length, rowHeight, showFloatingFilters);
     const bodyRowsTopOffset = stickyHeaderHeight + (effectiveTopRows.length * rowHeight);
@@ -2412,6 +2761,7 @@ export default function DashTanstackPivot(props) {
 
     const { renderCell, renderHeaderCell } = useRenderHelpers({
         // renderCell dependencies
+        serverSide,
         selectedCells,
         fillRange,
         dragStart,
@@ -2473,10 +2823,12 @@ export default function DashTanstackPivot(props) {
     };
 
     return (
-        <PivotErrorBoundary key={dataVersion}>
-        <div id={id} style={{ ...styles.root, ...style }}>
+        <div id={id} style={{ ...styles.root, ...loadingCssVars, ...style }}>
             <style>{loadingAnimationStyles}</style>
             <div style={srOnly} role="status" aria-live="polite">{announcement}</div>
+            {/* PivotAppBar is intentionally outside PivotErrorBoundary so that
+                the global search input (and other toolbar controls) are not
+                unmounted on every dataVersion change. */}
             <PivotAppBar
                 sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen}
                 themeName={themeName} setThemeName={setThemeName}
@@ -2486,11 +2838,14 @@ export default function DashTanstackPivot(props) {
                 showColTotals={showColTotals} setShowColTotals={setShowColTotals}
                 spacingMode={spacingMode} setSpacingMode={setSpacingMode} spacingLabels={spacingLabels}
                 layoutMode={layoutMode} setLayoutMode={setLayoutMode}
-                colorScale={colorScale} setColorScale={setColorScale}
+                colorScaleMode={colorScaleMode} setColorScaleMode={setColorScaleMode}
+                colorPalette={colorPalette} setColorPalette={setColorPalette}
                 rowCount={rowCount} exportPivot={exportPivot}
                 theme={theme} styles={styles}
-                setFilters={setFilters}
+                filters={filters} setFilters={setFilters}
+                onSaveView={handleSaveView}
             />
+        <PivotErrorBoundary key={dataVersion}>
             <div style={{display:'flex', flex:1, overflow:'hidden'}}>
                 {sidebarOpen && (
                     <SidebarPanel
@@ -2564,7 +2919,8 @@ export default function DashTanstackPivot(props) {
                     filters={filters}
                     handleHeaderFilter={handleHeaderFilter}
                     selectedCells={selectedCells}
-                    rowCount={rowCount}
+                    rowCount={statusRowCount}
+                    isRequestPending={isRequestPending}
                 />
             </div>
             {contextMenu && <ContextMenu {...contextMenu} onClose={() => setContextMenu(null)} />}
@@ -2585,8 +2941,8 @@ export default function DashTanstackPivot(props) {
                     fetchDrillData(drillModal.path, 0, drillModal.sortCol, drillModal.sortDir, text);
                 }}
             />
-        </div>
         </PivotErrorBoundary>
+        </div>
     );
 };
 
@@ -2616,6 +2972,8 @@ DashTanstackPivot.propTypes = {
     rowMove: PropTypes.object,
     drillThrough: PropTypes.object,
     drillEndpoint: PropTypes.string,
+    viewState: PropTypes.object,
+    savedView: PropTypes.object,
     conditionalFormatting: PropTypes.arrayOf(PropTypes.object),
     validationRules: PropTypes.object,
     columnPinning: PropTypes.shape({

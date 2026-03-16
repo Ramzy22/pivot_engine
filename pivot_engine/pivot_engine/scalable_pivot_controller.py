@@ -258,6 +258,52 @@ class ScalablePivotController(PivotController):
         )
         return result
 
+    @staticmethod
+    def _build_group_rows_sort(group_rows: List[str], base_sort: Any) -> List[Dict[str, Any]]:
+        """Ensure deterministic ordering for level queries."""
+        if isinstance(base_sort, list) and base_sort:
+            return base_sort
+        if isinstance(base_sort, dict) and base_sort:
+            return [base_sort]
+        return [{"field": dim, "order": "asc"} for dim in group_rows]
+
+    @staticmethod
+    def _build_parent_batch_filters(
+        parent_dims: List[str],
+        parent_paths: List[List[str]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Build broad-but-safe batch filters for many parent paths.
+        For 1 dim: exact IN list.
+        For multi-dim: per-dim IN lists (superset), then strict parent-key filtering after query.
+        """
+        if not parent_dims or not parent_paths:
+            return []
+
+        if len(parent_dims) == 1:
+            return [{
+                "field": parent_dims[0],
+                "op": "in",
+                "value": [str(path[0]) for path in parent_paths if len(path) >= 1],
+            }]
+
+        filters = []
+        for dim_idx, dim in enumerate(parent_dims):
+            vals = sorted({str(path[dim_idx]) for path in parent_paths if len(path) > dim_idx})
+            filters.append({"field": dim, "op": "in", "value": vals})
+        return filters
+
+    @staticmethod
+    def _row_parent_key(row: Dict[str, Any], parent_dims: List[str]) -> str:
+        """Build parent key 'd1|||d2' for dispatching children into hierarchy buckets."""
+        if not parent_dims:
+            return ""
+        parts = []
+        for dim in parent_dims:
+            val = row.get(dim)
+            parts.append("" if val is None else str(val))
+        return "|||".join(parts)
+
     async def run_progressive_load(self, spec: PivotSpec, chunk_callback: Optional[Callable] = None):
         """Run progressive data loading for large datasets"""
         result = await self.progressive_loader.load_progressive_chunks(spec, chunk_callback)
@@ -265,8 +311,9 @@ class ScalablePivotController(PivotController):
 
     async def run_hierarchical_pivot_batch_load(self, spec_dict: Dict[str, Any], target_paths: List[List[str]], max_levels: int = 3) -> Dict[str, Any]:
         """
-        Efficiently load multiple hierarchy levels/paths in batch.
-        Optimized for 'Expand All' case by using cumulative grouping queries.
+        Efficiently load only hierarchy levels that are actually needed.
+        - Always fetch root level.
+        - Fetch deeper levels only for expanded parent paths (or all levels for Expand All).
         
         Args:
             spec_dict: PivotSpec as dictionary
@@ -278,82 +325,87 @@ class ScalablePivotController(PivotController):
         """
         spec = PivotSpec.from_dict(spec_dict)
         results = {}
-        
-        # Strategy: Run one query per level, grouping by all cumulative dimensions
-        # Level 0: Group By [Dim0] -> Parent Key: ""
-        # Level 1: Group By [Dim0, Dim1] -> Parent Key: "Dim0Val"
-        # Level 2: Group By [Dim0, Dim1, Dim2] -> Parent Key: "Dim0Val|||Dim1Val"
-        
-        loop = asyncio.get_running_loop()
-        level_results = []
-        
-        # Identify max depth to load
-        num_levels = len(spec.rows)
-        
-        for level in range(num_levels):
-            if level > max_levels:
-                break
-                
-            # Construct query for this level
-            # Dimensions for this level include all previous ones plus current
-            dims = spec.rows[:level+1]
-            
-            # We need to construct this manually or via planner
-            level_spec = spec.copy()
-            level_spec.rows = dims # Set grouping to cumulative dimensions
-            # level_spec.columns is preserved to allow pivoting if requested
-            
-            # Important: Remove limit for expansion to see all nodes (or use a very high limit)
-            level_spec.limit = 100000 
-            
-            # Execute async but sequentially to avoid DuckDB concurrency issues
-            # We return as arrow for efficiency
-            try:
-                table = await self.run_pivot_async(level_spec, return_format="arrow")
-                level_results.append(table)
-            except Exception as e:
-                print(f"Error loading level {level}: {e}")
-                level_results.append(e)
+        rows = spec.rows or []
+        if not rows:
+            return results
 
-        # Process results into tree format
-        import pyarrow as pa
-        
-        for level, table in enumerate(level_results):
-            if isinstance(table, Exception):
-                print(f"Error loading level {level}: {table}")
+        max_group_len = min(len(rows), max_levels + 1)
+        expand_all = any(path == ['__ALL__'] for path in (target_paths or []))
+
+        # 1) Root level is always fetched.
+        root_spec = spec.copy()
+        root_spec.rows = rows[:1]
+        root_spec.limit = 100000
+        root_spec.sort = self._build_group_rows_sort(root_spec.rows, spec.sort)
+        root_spec.totals = bool(spec.totals)
+
+        try:
+            root_table = await self.run_pivot_async(root_spec, return_format="arrow")
+            if isinstance(root_table, pa.Table):
+                results[""] = root_table.to_pylist()
+        except Exception as e:
+            print(f"Error loading root level: {e}")
+            results[""] = []
+
+        # 2) Collapsed mode: no expanded paths, nothing deeper to load.
+        if not expand_all and not target_paths:
+            return results
+
+        # 3) Determine which deeper group levels to fetch.
+        # group_len = number of grouping dimensions in query.
+        # root: group_len=1 (already fetched)
+        levels_to_paths: Dict[int, Optional[List[List[str]]]] = {}
+
+        if expand_all:
+            for group_len in range(2, max_group_len + 1):
+                levels_to_paths[group_len] = None
+        else:
+            for path in target_paths or []:
+                if not isinstance(path, list) or not path or path == ['__ALL__']:
+                    continue
+                # Parent path length p -> fetch children at group_len = p + 1.
+                group_len = len(path) + 1
+                if 2 <= group_len <= max_group_len:
+                    levels_to_paths.setdefault(group_len, []).append(path)
+
+        # 4) Fetch each needed deeper level once (batched).
+        for group_len in sorted(levels_to_paths.keys()):
+            parent_dims = rows[:group_len - 1]
+            group_rows = rows[:group_len]
+            parent_paths = levels_to_paths[group_len]
+            valid_parent_keys = (
+                {"|||".join(str(v) for v in p) for p in (parent_paths or [])}
+                if parent_paths
+                else None
+            )
+
+            level_spec = spec.copy()
+            level_spec.rows = group_rows
+            level_spec.limit = 100000
+            level_spec.sort = self._build_group_rows_sort(group_rows, spec.sort)
+            # Only root level should carry totals. Deeper totals create duplicate subtotal
+            # rows and inflate collapsed row counts.
+            level_spec.totals = False
+            if parent_paths:
+                level_spec.filters = list(spec.filters or []) + self._build_parent_batch_filters(
+                    parent_dims, parent_paths
+                )
+
+            try:
+                level_table = await self.run_pivot_async(level_spec, return_format="arrow")
+            except Exception as e:
+                print(f"Error loading level group_len={group_len}: {e}")
                 continue
-            if not isinstance(table, pa.Table):
+
+            if not isinstance(level_table, pa.Table):
                 continue
-            
-            # Convert to rows
-            rows = table.to_pylist()
-            
-            # Partition rows by parent key
-            for row in rows:
-                if level == 0:
-                    parent_key = ""
-                else:
-                    # Construct parent key from previous dimensions
-                    # Parent path is values of dims[0]...dims[level-1]
-                    # The dimensions used for this level's query are spec.rows[:level+1]
-                    # So for level 1 (2nd level), dims are [0, 1].
-                    # The parent is defined by dim [0].
-                    
-                    parent_vals = []
-                    # We need the values for the PARENT's dimensions
-                    for i in range(level):
-                        dim_name = spec.rows[i]
-                        val = row.get(dim_name)
-                        parent_vals.append(str(val) if val is not None else "")
-                    
-                    parent_key = "|||".join(parent_vals)
-                
-                if parent_key not in results:
-                    results[parent_key] = []
-                
-                # Enrich row with metadata expected by adapter
-                results[parent_key].append(row)
-                
+
+            for row in level_table.to_pylist():
+                parent_key = self._row_parent_key(row, parent_dims)
+                if valid_parent_keys is not None and parent_key not in valid_parent_keys:
+                    continue
+                results.setdefault(parent_key, []).append(row)
+
         return results
 
     def _flatten_hierarchy_rows(self, spec: PivotSpec, hierarchy_result: Dict[str, List[Dict[str, Any]]], expanded_paths: List[List[str]]) -> List[Dict[str, Any]]:
@@ -414,12 +466,73 @@ class ScalablePivotController(PivotController):
         traverse("")
         return visible_rows
 
+    def _compute_color_scale_stats(
+        self,
+        rows: list,
+        row_fields: list,
+        col_fields: list,
+    ) -> dict:
+        """Compute per-column and global min/max from all data rows.
+
+        Excludes: grand total / subtotal rows, row-dimension fields, column-dimension
+        fields, and internal meta keys.  Handles negative values correctly — the
+        returned min/max span the actual data range so the frontend can detect a
+        zero-crossing and colour negative values red / positive values green.
+        """
+        meta_keys = {
+            '_id', '_path', '_isTotal', 'depth', '_depth', '_level', '_expanded',
+            '_parentPath', '_has_children', '_is_expanded', 'subRows', 'uuid',
+            '__virtualIndex',
+        }
+        for f in (row_fields or []):
+            meta_keys.add(f)
+        for f in (col_fields or []):
+            meta_keys.add(f)
+
+        by_col: dict = {}
+        table_min = float('inf')
+        table_max = float('-inf')
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            # Skip total / grand-total rows
+            if (row.get('_isTotal')
+                    or row.get('_path') == '__grand_total__'
+                    or row.get('_id') == 'Grand Total'):
+                continue
+            for key, value in row.items():
+                if key in meta_keys:
+                    continue
+                if not isinstance(value, (int, float)):
+                    continue
+                if value != value:  # NaN guard
+                    continue
+                if key not in by_col:
+                    by_col[key] = {'min': value, 'max': value}
+                else:
+                    if value < by_col[key]['min']:
+                        by_col[key]['min'] = value
+                    if value > by_col[key]['max']:
+                        by_col[key]['max'] = value
+                if value < table_min:
+                    table_min = value
+                if value > table_max:
+                    table_max = value
+
+        table_stats = None
+        if table_min != float('inf') and table_max != float('-inf'):
+            table_stats = {'min': table_min, 'max': table_max}
+
+        return {'byCol': by_col, 'table': table_stats}
+
     async def run_hierarchy_view(
         self,
         spec: PivotSpec,
         expanded_paths: List[List[str]],
         start_row: Optional[int] = None,
         end_row: Optional[int] = None,
+        include_grand_total_row: bool = False,
     ) -> Dict[str, Any]:
         """Single hierarchy pipeline for full hierarchical and virtual-window requests."""
         with self.hierarchy_request_lock:
@@ -430,6 +543,22 @@ class ScalablePivotController(PivotController):
             visible_rows = self._flatten_hierarchy_rows(spec, hierarchy_result, target_paths)
             total_rows = len(visible_rows)
 
+            def _is_grand_total(row: Dict[str, Any]) -> bool:
+                if not isinstance(row, dict):
+                    return False
+                return bool(
+                    row.get("_isTotal")
+                    or row.get("_path") == "__grand_total__"
+                    or row.get("_id") == "Grand Total"
+                )
+
+            grand_total_row = next((dict(row) for row in visible_rows if _is_grand_total(row)), None)
+
+            # Compute color scale stats from ALL visible rows (excluding totals and row fields)
+            color_scale_stats = self._compute_color_scale_stats(
+                visible_rows, spec.rows, getattr(spec, 'columns', [])
+            )
+
             if start_row is not None and end_row is not None:
                 window_rows = visible_rows[start_row:end_row + 1]
             else:
@@ -438,6 +567,8 @@ class ScalablePivotController(PivotController):
             return {
                 "rows": window_rows,
                 "total_rows": total_rows,
+                "grand_total_row": grand_total_row if include_grand_total_row else None,
+                "color_scale_stats": color_scale_stats,
             }
 
     async def run_hierarchical_progressive(self, spec: PivotSpec, expanded_paths: List[List[str]], level_callback: Optional[Callable] = None):
@@ -500,11 +631,14 @@ class ScalablePivotController(PivotController):
             # Smart Materialization Check
             duration = time.time() - start_time
             if self.stats_tracker.record_query(spec, duration):
-                # Trigger materialization in background (fire and forget) using TaskManager
-                self.task_manager.create_task(
-                    self._trigger_materialization(spec),
-                    name=f"smart_materialization_{spec.table}"
-                )
+                # DuckDB/Ibis on a shared connection is sensitive to concurrent background
+                # materialization and can surface "closed pending query result" errors.
+                # Keep smart materialization async only for backends that safely support it.
+                if not self._uses_duckdb_ibis():
+                    self.task_manager.create_task(
+                        self._trigger_materialization(spec),
+                        name=f"smart_materialization_{spec.table}"
+                    )
 
             # Final conversion
             if return_format == "dict":
@@ -530,6 +664,9 @@ class ScalablePivotController(PivotController):
     async def _trigger_materialization(self, spec: PivotSpec):
         """Helper to run materialization in background"""
         try:
+            if self._uses_duckdb_ibis():
+                # Disabled for DuckDB shared-connection mode (see caller guard).
+                return
             loop = asyncio.get_running_loop()
 
             def _materialize_with_lock():

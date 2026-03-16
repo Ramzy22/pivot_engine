@@ -20,6 +20,17 @@ def _is_missing_value(value: Any) -> bool:
     return value is None or (isinstance(value, float) and math.isnan(value))
 
 
+def _is_grand_total_row(row: Any) -> bool:
+    """Return True when a row represents the grand total."""
+    if not isinstance(row, dict):
+        return False
+    return bool(
+        row.get("_isTotal")
+        or row.get("_id") == "Grand Total"
+        or row.get("_path") == "__grand_total__"
+    )
+
+
 def _dedup_grand_total(rows: list) -> list:
     """Return rows with at most one grand total row (_isTotal=True or _id=='Grand Total').
 
@@ -164,6 +175,7 @@ class TanStackResponse:
     grouping: Optional[List[Dict[str, Any]]] = None
     version: Optional[int] = None
     col_schema: Optional[Dict[str, Any]] = None
+    color_scale_stats: Optional[Dict[str, Any]] = None
 
 
 class TanStackPivotAdapter:
@@ -189,6 +201,22 @@ class TanStackPivotAdapter:
                     seen_set.add(col_id)
         return seen
 
+    def _get_center_col_ids_from_columns(self, columns: list, excluded_ids: set) -> list:
+        """Return ordered center column IDs from response column metadata when available."""
+        ordered = []
+        seen = set()
+        for col in (columns or []):
+            if not isinstance(col, dict):
+                continue
+            col_id = col.get("id")
+            if not isinstance(col_id, str):
+                continue
+            if col_id in excluded_ids or col_id in seen:
+                continue
+            ordered.append(col_id)
+            seen.add(col_id)
+        return ordered
+
     def _apply_col_windowing(self, tanstack_result: 'TanStackResponse', request: 'TanStackRequest',
                               col_start: int, col_end: Optional[int], needs_col_schema: bool) -> 'TanStackResponse':
         """Apply column slicing and optionally build col_schema."""
@@ -197,16 +225,37 @@ class TanStackPivotAdapter:
 
         row_meta_keys = {
             '_id', '_path', '_isTotal', '_level', '_expanded', '_parentPath',
-            '_has_children', '_is_expanded', 'depth', 'uuid', 'subRows'
+            '_has_children', '_is_expanded', 'depth', '_depth', 'uuid', 'subRows'
         }
         pinned_ids = set(request.grouping or [])
-        cache_key = (request.table, frozenset(pinned_ids))
+        request_dimension_ids = {
+            col.get("id")
+            for col in (request.columns or [])
+            if isinstance(col, dict) and not col.get("aggregationFn") and col.get("id")
+        }
+        excluded_ids = set(row_meta_keys) | pinned_ids | request_dimension_ids
+        # Include a stable filter fingerprint so that pivot column sets computed under
+        # one filter are not reused after the filter changes (which can change which
+        # column values exist and cause wrong columns to be windowed into the response).
+        import hashlib as _hashlib, json as _json
+        _filter_fp = _hashlib.md5(
+            _json.dumps(request.filters or {}, sort_keys=True, default=str).encode()
+        ).hexdigest()[:8]
+        _cols_fp = _hashlib.md5(
+            _json.dumps(request.columns or [], sort_keys=True, default=str).encode()
+        ).hexdigest()[:8]
+        cache_key = (request.table, frozenset(excluded_ids), _filter_fp, _cols_fp)
 
         if needs_col_schema or cache_key not in self._center_col_ids_cache:
-            # Full scan: either the client asked for a schema refresh or the cache is cold.
-            center_col_ids = self._get_center_col_ids_from_rows(
-                tanstack_result.data, row_meta_keys, pinned_ids
+            # Build authoritative center order from response column metadata first.
+            # This keeps frontend column virtual indices aligned with backend slicing.
+            center_col_ids = self._get_center_col_ids_from_columns(
+                tanstack_result.columns, excluded_ids
             )
+            if not center_col_ids:
+                center_col_ids = self._get_center_col_ids_from_rows(
+                    tanstack_result.data, row_meta_keys, excluded_ids
+                )
             self._center_col_ids_cache[cache_key] = center_col_ids
         else:
             center_col_ids = self._center_col_ids_cache[cache_key]
@@ -283,6 +332,160 @@ class TanStackPivotAdapter:
             }
         )
 
+    @staticmethod
+    def _normalize_window_fn(window_fn: Optional[str]) -> Optional[str]:
+        if not window_fn:
+            return None
+        fn = str(window_fn).strip().lower()
+        mapping = {
+            "percent_of_total": "percent_of_grand_total",
+            "percent_of_grand_total": "percent_of_grand_total",
+            "percent_of_row": "percent_of_row",
+            "percent_of_col": "percent_of_col",
+        }
+        return mapping.get(fn)
+
+    @staticmethod
+    def _numeric_or_none(value: Any) -> Optional[float]:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            if isinstance(value, float) and math.isnan(value):
+                return None
+            return float(value)
+        return None
+
+    def _apply_pivot_window_functions(self, rows: List[Dict[str, Any]], request: TanStackRequest) -> None:
+        """
+        Apply pivot-window functions (% row/col/grand-total) on already aggregated pivot rows.
+
+        In pivot mode the planner materializes dynamic columns first; this post-step applies
+        the window transformation expected by the frontend value config.
+        """
+        if not rows:
+            return
+
+        grouping_ids = set(request.grouping or [])
+        has_column_dimensions = any(
+            isinstance(col, dict)
+            and col.get("id") not in grouping_ids
+            and not col.get("aggregationFn")
+            for col in (request.columns or [])
+        )
+
+        measure_windows = []
+        for col in (request.columns or []):
+            if not isinstance(col, dict) or not col.get("aggregationFn"):
+                continue
+            measure_id = col.get("id")
+            normalized_window = self._normalize_window_fn(col.get("windowFn"))
+            if measure_id and normalized_window:
+                measure_windows.append((measure_id, normalized_window))
+
+        if not measure_windows:
+            return
+
+        all_keys = set()
+        for row in rows:
+            if isinstance(row, dict):
+                all_keys.update(row.keys())
+
+        grand_total_row = next((row for row in rows if _is_grand_total_row(row)), None)
+        non_grand_rows = [row for row in rows if isinstance(row, dict) and not _is_grand_total_row(row)]
+
+        for measure_id, window_fn in measure_windows:
+            if has_column_dimensions:
+                pivot_keys = sorted(
+                    key for key in all_keys
+                    if isinstance(key, str)
+                    and key.endswith(f"_{measure_id}")
+                    and not key.startswith("__RowTotal__")
+                )
+            else:
+                pivot_keys = [measure_id] if measure_id in all_keys else []
+            if not pivot_keys:
+                continue
+
+            row_total_key = f"__RowTotal__{measure_id}"
+
+            if window_fn == "percent_of_row":
+                target_rows = non_grand_rows + ([grand_total_row] if isinstance(grand_total_row, dict) else [])
+                for row in target_rows:
+                    denom = self._numeric_or_none(row.get(row_total_key))
+                    if denom is None:
+                        denom = sum(self._numeric_or_none(row.get(k)) or 0.0 for k in pivot_keys)
+                    if not denom:
+                        for key in pivot_keys:
+                            if self._numeric_or_none(row.get(key)) is not None:
+                                row[key] = None
+                        if self._numeric_or_none(row.get(row_total_key)) is not None:
+                            row[row_total_key] = None
+                        continue
+                    for key in pivot_keys:
+                        val = self._numeric_or_none(row.get(key))
+                        if val is not None:
+                            row[key] = val / denom
+                    if self._numeric_or_none(row.get(row_total_key)) is not None:
+                        row[row_total_key] = 1.0
+
+            elif window_fn == "percent_of_col":
+                col_denoms: Dict[str, float] = {}
+                for key in pivot_keys:
+                    denom = self._numeric_or_none(grand_total_row.get(key)) if isinstance(grand_total_row, dict) else None
+                    if denom is None:
+                        denom = sum(self._numeric_or_none(row.get(key)) or 0.0 for row in non_grand_rows)
+                    col_denoms[key] = denom or 0.0
+
+                grand_total_value = self._numeric_or_none(grand_total_row.get(row_total_key)) if isinstance(grand_total_row, dict) else None
+                if grand_total_value is None:
+                    grand_total_value = sum(self._numeric_or_none(row.get(row_total_key)) or 0.0 for row in non_grand_rows)
+
+                for row in non_grand_rows:
+                    for key in pivot_keys:
+                        val = self._numeric_or_none(row.get(key))
+                        denom = col_denoms.get(key, 0.0)
+                        if val is not None:
+                            row[key] = (val / denom) if denom else None
+                    row_total_val = self._numeric_or_none(row.get(row_total_key))
+                    if row_total_val is not None:
+                        row[row_total_key] = (row_total_val / grand_total_value) if grand_total_value else None
+
+                if isinstance(grand_total_row, dict):
+                    for key in pivot_keys:
+                        denom = col_denoms.get(key, 0.0)
+                        if self._numeric_or_none(grand_total_row.get(key)) is not None:
+                            grand_total_row[key] = 1.0 if denom else None
+                    if has_column_dimensions and self._numeric_or_none(grand_total_row.get(row_total_key)) is not None:
+                        grand_total_row[row_total_key] = 1.0 if grand_total_value else None
+
+            elif window_fn == "percent_of_grand_total":
+                grand_total_value = None
+                if has_column_dimensions and isinstance(grand_total_row, dict):
+                    grand_total_value = self._numeric_or_none(grand_total_row.get(row_total_key))
+                if grand_total_value is None and isinstance(grand_total_row, dict):
+                    grand_total_value = sum(self._numeric_or_none(grand_total_row.get(key)) or 0.0 for key in pivot_keys)
+                if grand_total_value is None:
+                    if has_column_dimensions:
+                        grand_total_value = sum(self._numeric_or_none(row.get(row_total_key)) or 0.0 for row in non_grand_rows)
+                    else:
+                        grand_total_value = sum(
+                            self._numeric_or_none(row.get(key)) or 0.0
+                            for row in non_grand_rows
+                            for key in pivot_keys
+                        )
+                if not grand_total_value:
+                    continue
+
+                target_rows = non_grand_rows + ([grand_total_row] if isinstance(grand_total_row, dict) else [])
+                for row in target_rows:
+                    for key in pivot_keys:
+                        val = self._numeric_or_none(row.get(key))
+                        if val is not None:
+                            row[key] = val / grand_total_value
+                    row_total_val = self._numeric_or_none(row.get(row_total_key))
+                    if has_column_dimensions and row_total_val is not None:
+                        row[row_total_key] = row_total_val / grand_total_value
+
     def convert_tanstack_request_to_pivot_spec(self, request: TanStackRequest) -> PivotSpec:
         """Convert TanStack request to PivotSpec format"""
         # Extract grouping columns as hierarchy
@@ -295,11 +498,15 @@ class TanStackPivotAdapter:
         for col in request.columns:
             if col.get('aggregationFn'):
                 # This is an aggregation column
+                window_fn = col.get('windowFn')
+                planner_window_fn = (
+                    None if self._normalize_window_fn(window_fn) is not None else window_fn
+                )
                 measures.append(Measure(
                     field=col.get('aggregationField', col['id']),
                     agg=col.get('aggregationFn', 'sum'),
                     alias=col['id'],
-                    window_func=col.get('windowFn')
+                    window_func=planner_window_fn
                 ))
             elif col['id'] not in hierarchy_cols and col['id'] not in ('_id', 'depth', 'hierarchy', 'subRows'):
                 # This is a value column
@@ -310,6 +517,21 @@ class TanStackPivotAdapter:
         if request.filters:
             for field_name, filter_obj in request.filters.items():
                 if field_name in ('__request_unique__', '__row_number__', 'hierarchy'):
+                    continue
+
+                # Global search: convert to OR-contains across all row dimension fields
+                if field_name == 'global':
+                    search_val = filter_obj if isinstance(filter_obj, str) else (
+                        filter_obj.get('value') if isinstance(filter_obj, dict) else None
+                    )
+                    if search_val and str(search_val).strip() and hierarchy_cols:
+                        pivot_filters.append({
+                            'op': 'OR',
+                            'conditions': [
+                                {'field': f, 'op': 'contains', 'value': str(search_val), 'caseSensitive': False}
+                                for f in hierarchy_cols
+                            ]
+                        })
                     continue
 
                 if isinstance(filter_obj, dict):
@@ -323,7 +545,7 @@ class TanStackPivotAdapter:
                                 'value': cond.get('value'),
                                 'caseSensitive': cond.get('caseSensitive', False)
                             })
-                        
+
                         if conditions:
                             pivot_filters.append({
                                 'op': filter_obj['operator'],
@@ -338,7 +560,7 @@ class TanStackPivotAdapter:
                             'caseSensitive': filter_obj.get('caseSensitive', False)
                         })
                 elif isinstance(filter_obj, str) and filter_obj.strip() != '':
-                    # Support simple string filters (e.g. from global search or quick input)
+                    # Support simple string filters (e.g. from quick input)
                     pivot_filters.append({
                         'field': field_name,
                         'op': 'contains',
@@ -498,6 +720,10 @@ class TanStackPivotAdapter:
                     else:
                         row['_path'] = str(id(row))
 
+        # Apply pivot window functions (% row/% col/% grand total) after hierarchy
+        # metadata is normalized, so grand-total detection is stable.
+        self._apply_pivot_window_functions(rows, tanstack_request)
+
         # Calculate pagination info if needed
         pagination = None
         if tanstack_request.pagination:
@@ -512,17 +738,38 @@ class TanStackPivotAdapter:
         # Dynamic Column Generation for Pivot
         # If we have pivot columns, we need to update the response columns
         response_columns = tanstack_request.columns
-        
-        # Detect if we have new columns in the result that weren't in the request
-        # (excluding internal fields)
+        measure_ids = {c['id'] for c in tanstack_request.columns if c.get('aggregationFn')}
+        grouping_ids = set(tanstack_request.grouping or [])
+        has_column_dimensions = any(
+            c.get('id') not in grouping_ids and not c.get('aggregationFn')
+            for c in tanstack_request.columns
+        )
+
+        # In pivot mode (column dimensions present), base measure columns are placeholders.
+        # Keep only expanded dynamic pivot columns to avoid showing extra plain measures.
+        if has_column_dimensions and measure_ids:
+            response_columns = [c for c in response_columns if c.get('id') not in measure_ids]
+
+        # Detect dynamic columns using all rows in the response window, not only rows[0].
         if rows:
-            result_keys = list(rows[0].keys())
-            known_ids = {c['id'] for c in response_columns}
+            result_keys = set()
+            for row in rows:
+                if isinstance(row, dict):
+                    result_keys.update(row.keys())
+
+            known_ids = {c['id'] for c in response_columns if isinstance(c, dict) and c.get('id')}
+            meta_keys = {
+                '_id', '_path', '_isTotal', 'depth', '_depth', 'hierarchy',
+                '_level', '_expanded', '_parentPath', '_has_children', '_is_expanded',
+                'subRows', 'uuid', '__virtualIndex'
+            }
+
             new_columns = []
-            
-            for key in result_keys:
+            for key in sorted(result_keys):
+                if key in known_ids or key in meta_keys:
+                    continue
+
                 if key.startswith("__RowTotal__"):
-                    # This is a Row Total column
                     measure_key = key.replace("__RowTotal__", "")
                     header = f"Total {measure_key.replace('_', ' ').title()}"
                     new_columns.append({
@@ -531,29 +778,18 @@ class TanStackPivotAdapter:
                         'accessorKey': key,
                         'isRowTotal': True
                     })
-                elif key not in known_ids and key not in ('_id', 'depth', 'hierarchy', '_isTotal', '_path'):
-                    # This is a dynamic column (e.g. '2024_sales')
-                    # Try to format it nicely
-                    header = key.replace('_', ' ').title()
+                else:
                     new_columns.append({
                         'id': key,
-                        'header': header,
+                        'header': key.replace('_', ' ').title(),
                         'accessorKey': key,
-                        # We could try to infer type or aggregation from name
                     })
-            
+
             if new_columns:
-                # If we have dynamic columns (pivoted), we replace the original measure columns
-                # with the new pivoted columns to avoid duplication/confusion.
-                
-                # Identify measure IDs from request (those with aggregationFn)
-                measure_ids = {c['id'] for c in tanstack_request.columns if c.get('aggregationFn')}
-                
-                # Filter response columns to exclude original measures
-                response_columns = [c for c in response_columns if c['id'] not in measure_ids]
-                
-                # Append new pivoted columns
-                response_columns = response_columns + new_columns
+                existing_ids = {c.get('id') for c in response_columns if isinstance(c, dict)}
+                for col in new_columns:
+                    if col['id'] not in existing_ids:
+                        response_columns.append(col)
 
         return TanStackResponse(
             data=rows,
@@ -846,7 +1082,8 @@ class TanStackPivotAdapter:
                                           user: Optional[User] = None,
                                           col_start: int = 0,
                                           col_end: Optional[int] = None,
-                                          needs_col_schema: bool = False) -> TanStackResponse:
+                                          needs_col_schema: bool = False,
+                                          include_grand_total: bool = False) -> TanStackResponse:
         """Handle virtual scrolling request with start/end row indices"""
         # Convert request to pivot spec
         pivot_spec = self.convert_tanstack_request_to_pivot_spec(request)
@@ -861,17 +1098,43 @@ class TanStackPivotAdapter:
             target_paths = [['__ALL__']]
 
         if hasattr(self.controller, 'run_hierarchy_view'):
-            hierarchy_view = await self.controller.run_hierarchy_view(
-                pivot_spec, target_paths, start_row, end_row
-            )
+            try:
+                hierarchy_view = await self.controller.run_hierarchy_view(
+                    pivot_spec,
+                    target_paths,
+                    start_row,
+                    end_row,
+                    include_grand_total_row=include_grand_total,
+                )
+            except TypeError:
+                # Backward compatibility with older controller signatures.
+                hierarchy_view = await self.controller.run_hierarchy_view(
+                    pivot_spec, target_paths, start_row, end_row
+                )
             tanstack_result = self.convert_pivot_result_to_tanstack_format(
                 hierarchy_view.get("rows", []), request, version=request.version
             )
             if hierarchy_view.get("total_rows") is not None:
                 tanstack_result.total_rows = hierarchy_view["total_rows"]
+
+            if include_grand_total and request.totals:
+                grand_total_row = hierarchy_view.get("grand_total_row")
+                if isinstance(grand_total_row, dict):
+                    normalized_total = self.convert_pivot_result_to_tanstack_format(
+                        [grand_total_row], request, version=request.version
+                    ).data
+                    if normalized_total:
+                        grand_total_row = normalized_total[0]
+                if isinstance(grand_total_row, dict):
+                    existing_rows = tanstack_result.data or []
+                    if not any(_is_grand_total_row(row) for row in existing_rows):
+                        tanstack_result.data = [*existing_rows, grand_total_row]
+
             tanstack_result.data = _order_hierarchical_rows(
                 _move_grand_total_to_end(_dedup_grand_total(tanstack_result.data))
             )
+            if hierarchy_view.get("color_scale_stats"):
+                tanstack_result.color_scale_stats = hierarchy_view["color_scale_stats"]
             return self._apply_col_windowing(tanstack_result, request, col_start, col_end, needs_col_schema)
 
         # Use the controller's virtual scrolling method

@@ -9,34 +9,14 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'pivot_engine')))
 
 import pyarrow as pa
-from dash import Dash, html, dcc, dash_table
-from flask import request as flask_request, jsonify
+from dash import Dash, Input, Output, State, dcc, html, no_update
 
 from dash_tanstack_pivot import DashTanstackPivot
-from pivot_engine import create_tanstack_adapter
-from pivot_engine.runtime import (
-    PivotRuntimeService,
-    SessionRequestGate,
-    register_dash_drill_modal_callback,
-    register_dash_pivot_transport_callback,
-)
+from pivot_engine import create_tanstack_adapter, register_pivot_app
 
-_adapter = None
-_runtime_service = None
 _DEBUG_OUTPUT = os.environ.get("PIVOT_DEBUG_OUTPUT", "1").lower() in {"1", "true", "yes"}
 
-_SESSION_GATE = SessionRequestGate()
 
-
-def get_runtime_service():
-    global _runtime_service
-    if _runtime_service is None:
-        _runtime_service = PivotRuntimeService(
-            adapter_getter=get_adapter,
-            session_gate=_SESSION_GATE,
-            debug=_DEBUG_OUTPUT,
-        )
-    return _runtime_service
 # --- 2. Data Loading (Simulation) ---
 def load_initial_data(adapter):
     if _DEBUG_OUTPUT:
@@ -77,6 +57,13 @@ def load_initial_data(adapter):
     adapter.controller.materialized_hierarchy_manager.create_materialized_hierarchy(default_spec)
     if _DEBUG_OUTPUT:
         print("Hierarchy materialized.")
+    # Example: load Polars directly (no manual Arrow conversion required)
+    # import polars as pl
+    # df = pl.read_parquet("sales_data.parquet")
+    # adapter.load_data(df, "sales_data")
+
+
+_adapter = None
 
 
 def get_adapter():
@@ -86,57 +73,23 @@ def get_adapter():
         load_initial_data(_adapter)
     return _adapter
 
+
 # --- 3. Dash App ---
 app = Dash(__name__)
 
 
-@app.server.route('/api/drill-through')
-def api_drill_through():
-    import asyncio
-    from pivot_engine.types.pivot_spec import PivotSpec
-
-    table = flask_request.args.get('table', '')
-    row_path = flask_request.args.get('row_path', '')
-    row_fields_raw = flask_request.args.get('row_fields', '')
-    page = int(flask_request.args.get('page', 0))
-    page_size = min(int(flask_request.args.get('page_size', 500)), 500)
-    sort_col = flask_request.args.get('sort_col') or None
-    sort_dir = flask_request.args.get('sort_dir', 'asc')
-    text_filter = flask_request.args.get('filter', '')
-
-    if not table:
-        return jsonify({'error': 'table param required'}), 400
-
-    row_fields = [f for f in row_fields_raw.split(',') if f]
-    path_parts = row_path.split('|||') if row_path else []
-
-    drill_filters = []
-    for i, field in enumerate(row_fields):
-        if i < len(path_parts) and path_parts[i]:
-            drill_filters.append({'field': field, 'op': '=', 'value': path_parts[i]})
-
-    spec = PivotSpec(table=table, rows=[], measures=[], filters=[])
-    result = asyncio.run(
-        get_adapter().controller.get_drill_through_data(
-            spec,
-            drill_filters,
-            limit=page_size,
-            offset=page * page_size,
-            sort_col=sort_col,
-            sort_dir=sort_dir,
-            text_filter=text_filter,
-        )
-    )
-    return jsonify({
-        'rows': result['rows'],
-        'page': page,
-        'page_size': page_size,
-        'total_rows': result['total_rows'],
-    })
-
-
 app.layout = html.Div([
-    dcc.Store(id="drill-data-store"),
+    dcc.Store(id="saved-view-store"),
+    html.Div(
+        [
+            html.Button("Restore Saved View", id="restore-view-btn"),
+            html.Span(
+                "Save inside the pivot via the top bar 'Save View' button.",
+                style={"marginLeft": "10px", "fontSize": "12px", "color": "#555"},
+            ),
+        ],
+        style={"padding": "8px 16px"},
+    ),
     html.Div(
         DashTanstackPivot(
             id="pivot-grid",
@@ -151,6 +104,8 @@ app.layout = html.Div([
             filters={},
             sorting=[],
             expanded={},
+            showRowTotals=True,
+            showColTotals=True,
             # Pass ALL available fields as columns definition for the sidebar
             columns=[
                 {"id": "region"}, {"id": "country"}, {"id": "product"}, 
@@ -164,59 +119,54 @@ app.layout = html.Div([
             validationRules={
                 "sales_sum": [{"type": "numeric"}, {"type": "min", "value": 0}],
                 "cost_sum": [{"type": "numeric"}, {"type": "min", "value": 0}]
-            }
+            },
+            # Example: preload a previously saved full view snapshot.
+            # viewState={
+            #     "version": 1,
+            #     "table": "sales_data",
+            #     "state": {
+            #         "rowFields": ["cost", "region", "country"],
+            #         "colFields": ["date"],
+            #         "valConfigs": [{"field": "sales", "agg": "sum"}],
+            #         "filters": {},
+            #         "sorting": [],
+            #         "expanded": {},
+            #         "sidebarOpen": False,
+            #         "colorScaleMode": "table",
+            #     },
+            # },
         ),
         style={'padding': '0 16px'}
-    ),
-
-    # Drill Through Modal
-    html.Div(id="drill-modal", children=[
-        html.Div([
-            html.Div([
-                html.H2("Drill Through: Raw Records", style={'margin': 0}),
-                html.Button("X", id="close-drill", style={
-                    'border': 'none', 'background': 'none', 'fontSize': '20px', 'cursor': 'pointer'
-                })
-            ], style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'marginBottom': '16px'}),
-            
-            html.Div(id="drill-table-container", children=[
-                dash_table.DataTable(
-                    id="drill-table",
-                    columns=[],
-                    data=[],
-                    page_size=15,
-                    style_table={'overflowX': 'auto'},
-                    style_cell={'textAlign': 'left', 'padding': '8px', 'fontSize': '13px'},
-                    style_header={'backgroundColor': '#f5f5f5', 'fontWeight': 'bold'}
-                )
-            ])
-        ], style={
-            'position': 'relative', 'margin': '5% auto', 'padding': '20px', 
-            'width': '80%', 'backgroundColor': '#fff', 'borderRadius': '8px',
-            'boxShadow': '0 4px 20px rgba(0,0,0,0.2)', 'maxHeight': '80vh', 'overflowY': 'auto'
-        })
-    ], style={
-        'display': 'none', 'position': 'fixed', 'zIndex': 10002, 'left': 0, 'top': 0, 
-        'width': '100%', 'height': '100%', 'backgroundColor': 'rgba(0,0,0,0.5)'
-    })
+    )
 ])
 
-# --- 4. Reusable Runtime Callback Wiring ---
-register_dash_pivot_transport_callback(
-    app,
-    get_runtime_service,
-    pivot_id="pivot-grid",
-    drill_store_id="drill-data-store",
-    debug=_DEBUG_OUTPUT,
+# Capture saved view emitted by the component into Dash state (Store).
+@app.callback(
+    Output("saved-view-store", "data"),
+    Input("pivot-grid", "savedView"),
+    prevent_initial_call=True,
 )
+def persist_saved_view(saved_view):
+    if not saved_view:
+        return no_update
+    return saved_view
 
-register_dash_drill_modal_callback(
-    app,
-    drill_store_id="drill-data-store",
-    close_drill_id="close-drill",
-    drill_modal_id="drill-modal",
-    drill_table_id="drill-table",
+
+# Restore the last saved view from Dash Store back into the component.
+@app.callback(
+    Output("pivot-grid", "viewState"),
+    Input("restore-view-btn", "n_clicks"),
+    State("saved-view-store", "data"),
+    prevent_initial_call=True,
 )
+def restore_saved_view(_clicks, saved_view):
+    if not saved_view:
+        return no_update
+    return saved_view
+
+
+# --- 4. Pivot wiring (one line) ---
+register_pivot_app(app, adapter_getter=get_adapter, pivot_id="pivot-grid")
 
 if __name__ == "__main__":
     app.run(debug=True, port=8050)

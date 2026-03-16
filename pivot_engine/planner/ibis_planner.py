@@ -312,6 +312,33 @@ class IbisPlanner:
             has_joins
         )
 
+    def _apply_stable_ordering(
+        self,
+        table: IbisTable,
+        sort_specs: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]],
+        fallback_fields: Optional[List[str]],
+    ) -> IbisTable:
+        """Apply requested sort and append deterministic tie-breakers."""
+        order_exprs = []
+        requested_fields = set()
+
+        if sort_specs:
+            normalized = sort_specs if isinstance(sort_specs, list) else [sort_specs]
+            order_exprs.extend(self.builder.build_sort_expressions(table, normalized))
+            requested_fields = {
+                s.get("field")
+                for s in normalized
+                if isinstance(s, dict) and s.get("field") in table.columns
+            }
+
+        for field in (fallback_fields or []):
+            if field in table.columns and field not in requested_fields:
+                order_exprs.append(table[field].asc(nulls_first=True))
+
+        if order_exprs:
+            return table.order_by(order_exprs)
+        return table
+
     # _convert_filter_to_ibis removed, using self.builder.build_filter_expression
     # _convert_sort_to_ibis removed, using self.builder.build_sort_expressions
     # _convert_measure_to_ibis removed, using self.builder.build_measure_aggregation
@@ -324,13 +351,31 @@ class IbisPlanner:
         Standard pivot table planning using Ibis expressions.
         """
         base_table = self.con.table(spec.table)
-        
-        filtered_table = base_table
+        base_columns = set(base_table.columns)
+
+        # Split filters into pre-aggregation (WHERE) and post-aggregation (HAVING).
+        # A filter is post-aggregation when its field is not a raw table column —
+        # i.e. it targets a computed pivot column such as "Headphones_cost_sum".
+        pre_filters = []
+        post_filters = []
         if spec.filters:
-            filter_expr = self.builder.build_filter_expression(base_table, spec.filters)
+            for f in spec.filters:
+                if 'conditions' in f:
+                    # Composite filter: check the first condition's field
+                    first_field = (f.get('conditions') or [{}])[0].get('field', '')
+                else:
+                    first_field = f.get('field', '')
+                if first_field and first_field not in base_columns:
+                    post_filters.append(f)
+                else:
+                    pre_filters.append(f)
+
+        filtered_table = base_table
+        if pre_filters:
+            filter_expr = self.builder.build_filter_expression(base_table, pre_filters)
             if filter_expr is not None:
                 filtered_table = filtered_table.filter(filter_expr)
-        
+
         if spec.cursor and spec.sort:
             cursor_filter_expr = self.builder.build_cursor_filter_expression(filtered_table, spec)
             if cursor_filter_expr is not None:
@@ -403,11 +448,20 @@ class IbisPlanner:
             aggregated_table = filtered_table.group_by(group_cols).aggregate(ibis_aggregations)
         else:
             aggregated_table = filtered_table.aggregate(ibis_aggregations)
-        
-        if spec.sort:
-            ibis_sorts = self.builder.build_sort_expressions(aggregated_table, spec.sort)
-            if ibis_sorts:
-                aggregated_table = aggregated_table.order_by(ibis_sorts)
+
+        # Apply post-aggregation (HAVING) filters — these target computed pivot columns
+        if post_filters:
+            post_filter_expr = self.builder.build_filter_expression(
+                aggregated_table, post_filters, is_post_agg=True
+            )
+            if post_filter_expr is not None:
+                aggregated_table = aggregated_table.filter(post_filter_expr)
+
+        aggregated_table = self._apply_stable_ordering(
+            aggregated_table,
+            spec.sort,
+            group_cols,
+        )
         
         if spec.limit:
             aggregated_table = aggregated_table.limit(spec.limit)
@@ -603,13 +657,16 @@ class IbisPlanner:
         else:
             result_expr = base_table.aggregate(pivot_aggs)
             
+        valid_sorts = None
         if spec.sort:
-            valid_sorts = [s for s in (spec.sort if isinstance(spec.sort, list) else [spec.sort]) 
-                          if s.get('field') in row_dims]
-            if valid_sorts:
-                ibis_sorts = self.builder.build_sort_expressions(result_expr, valid_sorts)
-                if ibis_sorts:
-                    result_expr = result_expr.order_by(ibis_sorts)
+            valid_sorts = [s for s in (spec.sort if isinstance(spec.sort, list) else [spec.sort])
+                          if s.get('field') in result_expr.columns]
+
+        result_expr = self._apply_stable_ordering(
+            result_expr,
+            valid_sorts,
+            row_dims,
+        )
                     
         if spec.limit:
             result_expr = result_expr.limit(spec.limit)

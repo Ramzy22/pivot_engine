@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scalable-pivot-engine"
+version = "1.0.0"
+description = "A high-performance, scalable pivot engine optimized for millions of rows with advanced features"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9", 
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Information Analysis"
+]
+keywords = ["pivot", "analytics", "database", "olap", "scalable", "performance"]
+dependencies = [
+    "duckdb>=0.8.0",
+    "pyarrow>=10.0.0",
+    "ibis-framework>=4.0.0; extra != \"no-ibis\"",
+    "pandas>=1.5.0",
+    "fastapi>=0.100.0; extra != \"no-api\"",
+    "uvicorn[standard]>=0.20.0; extra != \"no-api\""
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.20.0",
+    "black",
+    "flake8"
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/scalable-pivot-engine"
+Repository = "https://github.com/yourusername/scalable-pivot-engine.git"
+Issues = "https://github.com/yourusername/scalable-pivot-engine/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pivot_engine*", "scalable_pivot_engine*"]
+
+[tool.setuptools.package-data]
+pivot_engine = ["**/*.py", "**/*.md"]
+scalable_pivot_engine = ["**/*.py", "**/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow",
+    "integration: marks tests as integration tests"
+]

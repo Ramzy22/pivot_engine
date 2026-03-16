@@ -63,9 +63,27 @@ export function PivotTableBody({
     // Status bar
     selectedCells,
     rowCount,
+    isRequestPending,
 }) {
     return (
         <div style={styles.main}>
+            {isRequestPending && (
+                <div
+                    aria-hidden="true"
+                    style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        height: '3px',
+                        zIndex: 120,
+                        pointerEvents: 'none',
+                        background: 'var(--pivot-loading-progress-gradient, linear-gradient(90deg, rgba(75,139,245,0) 0%, rgba(75,139,245,0.9) 45%, rgba(75,139,245,0) 100%))',
+                        backgroundSize: '220% 100%',
+                        animation: 'pivot-skeleton-shimmer var(--pivot-loading-shimmer-duration, 2.8s) linear infinite'
+                    }}
+                />
+            )}
             <div
                 ref={parentRef}
                 style={{...styles.scrollContainer, overflow: 'auto'}}
@@ -75,7 +93,7 @@ export function PivotTableBody({
                 aria-rowcount={rows.length}
                 aria-colcount={visibleLeafColumns.length}
             >
-                 <div style={{width: `${totalLayoutWidth}px`, minWidth:'100%', height: `${rowVirtualizer.getTotalSize() + (effectiveTopRows.length + effectiveBottomRows.length) * rowHeight}px`, position: 'relative'}}>
+                 <div style={{width: `${totalLayoutWidth}px`, minWidth:'100%', height: `${rowVirtualizer.getTotalSize() + stickyHeaderHeight + (effectiveTopRows.length + effectiveBottomRows.length) * rowHeight}px`, position: 'relative'}}>
                      {/* Sticky Header */}
                      <div style={{...styles.headerSticky, width: 'fit-content', display: 'flex'}} role="rowgroup">
                          {/* Left Section */}
@@ -94,10 +112,12 @@ export function PivotTableBody({
                                                      style={{width: '100%', fontSize: '11px', padding: '2px 4px', border: `1px solid ${theme.border}`, borderRadius: '2px'}}
                                                      placeholder="Filter..."
                                                      value={(filters[column.id] && filters[column.id].conditions && filters[column.id].conditions[0]) ? filters[column.id].conditions[0].value : ''}
-                                                     onChange={e => handleHeaderFilter(column.id, {
-                                                         operator: 'AND',
-                                                         conditions: [{ type: 'contains', value: e.target.value, caseSensitive: false }]
-                                                     })}
+                                                     onChange={e => {
+                                                         const val = e.target.value;
+                                                         handleHeaderFilter(column.id, val
+                                                             ? { operator: 'AND', conditions: [{ type: 'contains', value: val, caseSensitive: false }] }
+                                                             : null);
+                                                     }}
                                                      onClick={(e) => e.stopPropagation()}
                                                  />
                                              )}
@@ -161,10 +181,10 @@ export function PivotTableBody({
                                                  width: `${columnSkeletonWidth}px`,
                                                  height: '60%',
                                                  borderRadius: '8px',
-                                                 background: 'linear-gradient(90deg, #eef2fb 0%, #dbe8ff 45%, #eef2fb 100%)',
+                                                 background: 'var(--pivot-loading-header-gradient, linear-gradient(90deg, rgba(233,243,255,0.92) 0%, rgba(193,220,255,0.98) 48%, rgba(233,243,255,0.92) 100%))',
                                                  backgroundSize: '220% 100%',
-                                                 border: `1px solid ${theme.border}`,
-                                                 animation: 'pivot-row-loader-enter 220ms ease-out, pivot-skeleton-shimmer 1.25s ease-in-out infinite'
+                                                 border: '1px solid var(--pivot-loading-border, rgba(153, 187, 238, 0.5))',
+                                                 animation: 'pivot-row-loader-enter 220ms ease-out, pivot-skeleton-shimmer var(--pivot-loading-shimmer-duration, 2.8s) linear infinite'
                                              }}
                                          />
                                      ))}
@@ -183,10 +203,12 @@ export function PivotTableBody({
                                                          style={{width: '100%', fontSize: '11px', padding: '2px 4px', border: `1px solid ${theme.border}`, borderRadius: '2px'}}
                                                          placeholder="Filter..."
                                                          value={(filters[column.id] && filters[column.id].conditions && filters[column.id].conditions[0]) ? filters[column.id].conditions[0].value : ''}
-                                                         onChange={e => handleHeaderFilter(column.id, {
-                                                             operator: 'AND',
-                                                             conditions: [{ type: 'contains', value: e.target.value, caseSensitive: false }]
-                                                         })}
+                                                         onChange={e => {
+                                                             const val = e.target.value;
+                                                             handleHeaderFilter(column.id, val
+                                                                 ? { operator: 'AND', conditions: [{ type: 'contains', value: val, caseSensitive: false }] }
+                                                                 : null);
+                                                         }}
                                                          onClick={(e) => e.stopPropagation()}
                                                      />
                                                  )}
@@ -214,10 +236,12 @@ export function PivotTableBody({
                                                      style={{width: '100%', fontSize: '11px', padding: '2px 4px', border: `1px solid ${theme.border}`, borderRadius: '2px'}}
                                                      placeholder="Filter..."
                                                      value={(filters[column.id] && filters[column.id].conditions && filters[column.id].conditions[0]) ? filters[column.id].conditions[0].value : ''}
-                                                     onChange={e => handleHeaderFilter(column.id, {
-                                                         operator: 'AND',
-                                                         conditions: [{ type: 'contains', value: e.target.value, caseSensitive: false }]
-                                                     })}
+                                                     onChange={e => {
+                                                         const val = e.target.value;
+                                                         handleHeaderFilter(column.id, val
+                                                             ? { operator: 'AND', conditions: [{ type: 'contains', value: val, caseSensitive: false }] }
+                                                             : null);
+                                                     }}
                                                      onClick={(e) => e.stopPropagation()}
                                                  />
                                              )}
@@ -229,8 +253,7 @@ export function PivotTableBody({
                      </div>
 
                      {/* Top Pinned Rows */}
-                     {effectiveTopRows.map((row, i) => {
-                         const isExpandedRow = row.getIsExpanded();
+                    {effectiveTopRows.map((row, i) => {
                          const isLastPinnedTop = i === effectiveTopRows.length - 1;
                          const headerHeight = stickyHeaderHeight;
                          return (
@@ -245,7 +268,7 @@ export function PivotTableBody({
                                  top: headerHeight + (i * rowHeight),
                                  zIndex: 50, // Increased for top rows
                                  background: (row.original && row.original._isTotal) ? (isDarkTheme(theme) ? '#1a2e1a' : '#f0f7f0') : theme.background,
-                                 borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
+                                 borderBottom: `1px solid ${theme.border}`,
                                  boxShadow: isLastPinnedTop ? `0 2px 4px -2px ${theme.border}80` : 'none'
                              }}>
                                  {row.getLeftVisibleCells().map((cell) => renderCell(cell, i, false))}
@@ -282,10 +305,10 @@ export function PivotTableBody({
                                          width: `${columnSkeletonWidth}px`,
                                          height: '100%',
                                          borderRadius: '8px',
-                                         background: 'linear-gradient(90deg, rgba(238,242,251,0.65) 0%, rgba(219,232,255,0.9) 45%, rgba(238,242,251,0.65) 100%)',
+                                         background: 'var(--pivot-loading-cell-gradient, linear-gradient(90deg, rgba(232,242,255,0.7) 0%, rgba(190,218,255,0.94) 45%, rgba(232,242,255,0.7) 100%))',
                                          backgroundSize: '220% 100%',
-                                         border: `1px solid ${theme.border}55`,
-                                         animation: 'pivot-row-loader-enter 220ms ease-out, pivot-skeleton-shimmer 1.25s ease-in-out infinite'
+                                         border: '1px solid var(--pivot-loading-border, rgba(153, 187, 238, 0.5))',
+                                         animation: 'pivot-row-loader-enter 220ms ease-out, pivot-skeleton-shimmer var(--pivot-loading-shimmer-duration, 2.8s) linear infinite'
                                      }}
                                  />
                              ))}
@@ -381,7 +404,6 @@ export function PivotTableBody({
                              return null;
                          }
 
-                          const isExpandedRow = row.getIsExpanded();
                           const pendingTransitionMode = pendingRowTransitions.get(row.id);
                           const showRowTransitionLoader = !!pendingTransitionMode;
 
@@ -402,7 +424,7 @@ export function PivotTableBody({
                                       top: `${virtualRow.start + topOffset}px`,
                                       width: `${totalLayoutWidth}px`,
                                       background: (row.original && row.original._isTotal) ? (isDarkTheme(theme) ? '#1a2e1a' : '#f0f7f0') : theme.background,
-                                      borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
+                                      borderBottom: `1px solid ${theme.border}`,
                                       transition: rowVirtualizer.isScrolling ? 'none' : 'background-color 0.2s'
                                   }}>
                                       {row.getLeftVisibleCells().map((cell) => renderCell(cell, virtualRow.index, true))}
@@ -423,19 +445,19 @@ export function PivotTableBody({
                                           pointerEvents: 'none',
                                           height: rowHeight,
                                           top: `${virtualRow.start + topOffset + virtualRow.size}px`,
-                                          width: `${totalLayoutWidth}px`,
-                                          position: 'absolute',
-                                          background: `linear-gradient(90deg, #f8fbff 0%, #eef5ff 50%, #f8fbff 100%)`,
+                                         width: `${totalLayoutWidth}px`,
+                                         position: 'absolute',
+                                          background: 'var(--pivot-loading-row-gradient, linear-gradient(90deg, rgba(246,250,255,0.96) 0%, rgba(228,241,255,0.98) 50%, rgba(246,250,255,0.96) 100%))',
                                           backgroundSize: '220% 100%',
                                           borderBottom: `1px dashed ${theme.border}`,
                                           display: 'flex',
                                           alignItems: 'center',
                                           justifyContent: 'flex-start',
                                           overflow: 'hidden',
-                                          opacity: 0.95,
-                                          zIndex: 18,
-                                          boxShadow: `0 4px 12px -8px ${theme.border}`,
-                                          animation: 'pivot-row-loader-enter 220ms ease-out, pivot-skeleton-shimmer 1.25s ease-in-out infinite'
+                                         opacity: 0.95,
+                                         zIndex: 18,
+                                         boxShadow: `0 4px 12px -8px ${theme.border}`,
+                                          animation: 'pivot-row-loader-enter 220ms ease-out, pivot-skeleton-shimmer var(--pivot-loading-shimmer-duration, 2.8s) linear infinite'
                                       }}>
                                           <SkeletonRow style={{width: '100%', opacity: 0.45}} rowHeight={rowHeight} />
                                           <div
@@ -478,7 +500,6 @@ export function PivotTableBody({
                      )}
                      {/* Bottom Pinned Rows */}
                     {effectiveBottomRows.map((row, i) => {
-                         const isExpandedRow = row.getIsExpanded();
                          const isFirstPinnedBottom = i === 0;
                          return (
                              <div
@@ -492,7 +513,7 @@ export function PivotTableBody({
                                  bottom: ((effectiveBottomRows.length - 1 - i) * rowHeight),
                                  zIndex: 50, // Increased for bottom rows
                                  background: (row.original && row.original._isTotal) ? (isDarkTheme(theme) ? '#1a2e1a' : '#f0f7f0') : theme.background,
-                                 borderBottom: isExpandedRow ? `2px solid ${theme.primary}` : `1px solid ${theme.border}`,
+                                 borderBottom: `1px solid ${theme.border}`,
                                  boxShadow: isFirstPinnedBottom ? `0 -2px 4px -2px ${theme.border}80` : 'none'
                              }}>
                                  {row.getLeftVisibleCells().map((cell) => renderCell(cell, i, false))}
@@ -505,10 +526,16 @@ export function PivotTableBody({
                                  {row.getRightVisibleCells().map((cell) => renderCell(cell, i, false))}
                              </div>
                          )
-                     })}
+                    })}
                  </div>
             </div>
-            <StatusBar selectedCells={selectedCells} rowCount={rowCount} visibleRowsCount={rows.length} theme={theme} />
+            <StatusBar
+                selectedCells={selectedCells}
+                rowCount={rowCount}
+                visibleRowsCount={rows.length}
+                theme={theme}
+                isLoading={isRequestPending}
+            />
         </div>
     );
 }
