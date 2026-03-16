@@ -1,4 +1,4 @@
-from .pivot_engine.runtime import (
+from pivot_engine.pivot_engine.runtime import (
     DashPivotInstanceConfig,
     PivotRequestContext,
     PivotRuntimeService,
