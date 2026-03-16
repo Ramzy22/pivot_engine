@@ -1,7 +1,10 @@
 """
 Redis-based cache for pivot query results, supporting various data types including Arrow IPC format.
 """
-import redis
+try:
+    import redis
+except ImportError:
+    redis = None
 import pyarrow as pa
 import pyarrow.ipc as ipc
 import json
@@ -24,6 +27,8 @@ class RedisCache:
             db: Redis database number.
             ttl: Default time-to-live for cache entries in seconds.
         """
+        if redis is None:
+            raise ImportError("redis package is required to use RedisCache. Install it with: pip install redis")
         try:
             # Note: decode_responses=False is important as we are storing binary data
             self.client = redis.StrictRedis(host=host, port=port, db=db, decode_responses=False)
