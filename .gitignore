@@ -161,8 +161,13 @@ secrets.json
 # Data files
 *.parquet
 *.csv
-*.json
 *.xlsx
+# Exclude loose JSON data files but keep package metadata
+*.json
+!dash_tanstack_pivot/dash_tanstack_pivot/package-info.json
+!dash_tanstack_pivot/dash_tanstack_pivot/metadata.json
+!dash_tanstack_pivot/package.json
+!package.json
 
 # DuckDB files
 *.db
