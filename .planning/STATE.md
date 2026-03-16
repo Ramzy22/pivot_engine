@@ -5,14 +5,14 @@ milestone_name: milestone
 current_phase: 07-column-display-ui-states
 current_plan: 3
 status: Ready for execution
-stopped_at: Completed 09-packaging-docs-ci-cd-02-PLAN.md
-last_updated: "2026-03-16T05:37:10.030Z"
+stopped_at: Completed 09-packaging-docs-ci-cd-03-PLAN.md
+last_updated: "2026-03-16T05:42:22.039Z"
 last_activity: 2026-03-16
 progress:
   total_phases: 11
-  completed_phases: 10
+  completed_phases: 11
   total_plans: 37
-  completed_plans: 36
+  completed_plans: 37
   percent: 93
 ---
 
@@ -91,6 +91,7 @@ Progress: [█████████░] 93%
 | Phase 08-code-quality-refactor P04 | 45 | 2 tasks | 5 files |
 | Phase 09-packaging-docs-ci-cd P01 | 10 | 3 tasks | 6 files |
 | Phase 09-packaging-docs-ci-cd P02 | 5 | 3 tasks | 7 files |
+| Phase 09-packaging-docs-ci-cd P03 | 3 min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -174,6 +175,9 @@ Recent decisions affecting current work:
 - [Phase 09-packaging-docs-ci-cd]: README rewritten as consumer docs with 10-line quickstart and props table — targets pip install users not backend API operators
 - [Phase 09-packaging-docs-ci-cd]: test_docs_examples_contract.py uses AST inspection (not execution) to validate example wiring — avoids DuckDB/Dash side effects at test collection
 - [Phase 09-packaging-docs-ci-cd]: test_multi_instance_isolation.py uses in-memory DuckDB with PyArrow tables — deterministic in local and CI with no network/file dependencies
+- [Phase 09-packaging-docs-ci-cd]: ci.yml splits python-tests, js-build, and package-smoke as separate jobs so each gate is independently visible in GitHub Actions UI
+- [Phase 09-packaging-docs-ci-cd]: release.yml uses pypa/gh-action-pypi-publish with id-token trusted publishing (not API token secret)
+- [Phase 09-packaging-docs-ci-cd]: check_tag_version.py --allow-no-tag flag lets the script pass in local dev environments with no current tag
 
 ### Pending Todos
 
@@ -185,8 +189,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-16T05:37:10.022Z
-Stopped at: Completed 09-packaging-docs-ci-cd-02-PLAN.md
+Last session: 2026-03-16T05:42:22.031Z
+Stopped at: Completed 09-packaging-docs-ci-cd-03-PLAN.md
 Resume file: None
 
 

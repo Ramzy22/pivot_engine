@@ -94,7 +94,7 @@
 
 - [x] **PKG-01**: `pip install dash-tanstack-pivot` installs the component with zero additional config
 - [x] **PKG-02**: Optional extras: `pip install dash-tanstack-pivot[redis]` for Redis cache
-- [ ] **PKG-03**: Package published to PyPI with semantic versioning
+- [x] **PKG-03**: Package published to PyPI with semantic versioning
 - [x] **PKG-04**: `dash_tanstack_pivot` Python module imports cleanly with no missing dependency errors
 - [x] **PKG-05**: npm build (`npm run build`) produces a single minified JS bundle correctly
 
@@ -107,9 +107,9 @@
 
 ### CI/CD
 
-- [ ] **CI-01**: GitHub Actions runs Python tests on every push
-- [ ] **CI-02**: GitHub Actions runs JS build on every push
-- [ ] **CI-03**: GitHub Actions auto-publishes to PyPI on version tag push
+- [x] **CI-01**: GitHub Actions runs Python tests on every push
+- [x] **CI-02**: GitHub Actions runs JS build on every push
+- [x] **CI-03**: GitHub Actions auto-publishes to PyPI on version tag push
 
 ---
 
@@ -203,16 +203,16 @@
 | QUAL-04 | Phase 8 - Code Quality Refactor | Complete |
 | PKG-01 | Phase 9 - Packaging, Docs & CI/CD | Complete |
 | PKG-02 | Phase 9 - Packaging, Docs & CI/CD | Complete |
-| PKG-03 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| PKG-03 | Phase 9 - Packaging, Docs & CI/CD | Complete |
 | PKG-04 | Phase 9 - Packaging, Docs & CI/CD | Complete |
 | PKG-05 | Phase 9 - Packaging, Docs & CI/CD | Complete |
 | DOC-01 | Phase 9 - Packaging, Docs & CI/CD | Complete |
 | DOC-02 | Phase 9 - Packaging, Docs & CI/CD | Complete |
 | DOC-03 | Phase 9 - Packaging, Docs & CI/CD | Complete |
 | DOC-04 | Phase 9 - Packaging, Docs & CI/CD | Complete |
-| CI-01 | Phase 9 - Packaging, Docs & CI/CD | Pending |
-| CI-02 | Phase 9 - Packaging, Docs & CI/CD | Pending |
-| CI-03 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| CI-01 | Phase 9 - Packaging, Docs & CI/CD | Complete |
+| CI-02 | Phase 9 - Packaging, Docs & CI/CD | Complete |
+| CI-03 | Phase 9 - Packaging, Docs & CI/CD | Complete |
 
 **Coverage:**
 - v1 requirements: 58 total (50 original + DRILL-06 + UI-01 through UI-06 + EXPORT-05)
