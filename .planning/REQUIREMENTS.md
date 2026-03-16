@@ -100,10 +100,10 @@
 
 ### Documentation & Examples
 
-- [ ] **DOC-01**: README shows a minimal working example (DataFrame → pivot table in 10 lines)
-- [ ] **DOC-02**: All Python props documented with types, defaults, and descriptions
-- [ ] **DOC-03**: At least 3 example Dash apps covering: basic, hierarchical, and SQL-connected use cases
-- [ ] **DOC-04**: CHANGELOG.md initialized
+- [x] **DOC-01**: README shows a minimal working example (DataFrame → pivot table in 10 lines)
+- [x] **DOC-02**: All Python props documented with types, defaults, and descriptions
+- [x] **DOC-03**: At least 3 example Dash apps covering: basic, hierarchical, and SQL-connected use cases
+- [x] **DOC-04**: CHANGELOG.md initialized
 
 ### CI/CD
 
@@ -206,10 +206,10 @@
 | PKG-03 | Phase 9 - Packaging, Docs & CI/CD | Pending |
 | PKG-04 | Phase 9 - Packaging, Docs & CI/CD | Complete |
 | PKG-05 | Phase 9 - Packaging, Docs & CI/CD | Complete |
-| DOC-01 | Phase 9 - Packaging, Docs & CI/CD | Pending |
-| DOC-02 | Phase 9 - Packaging, Docs & CI/CD | Pending |
-| DOC-03 | Phase 9 - Packaging, Docs & CI/CD | Pending |
-| DOC-04 | Phase 9 - Packaging, Docs & CI/CD | Pending |
+| DOC-01 | Phase 9 - Packaging, Docs & CI/CD | Complete |
+| DOC-02 | Phase 9 - Packaging, Docs & CI/CD | Complete |
+| DOC-03 | Phase 9 - Packaging, Docs & CI/CD | Complete |
+| DOC-04 | Phase 9 - Packaging, Docs & CI/CD | Complete |
 | CI-01 | Phase 9 - Packaging, Docs & CI/CD | Pending |
 | CI-02 | Phase 9 - Packaging, Docs & CI/CD | Pending |
 | CI-03 | Phase 9 - Packaging, Docs & CI/CD | Pending |
