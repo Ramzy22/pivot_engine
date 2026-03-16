@@ -71,7 +71,7 @@ jobs:
           node-version: "20"
 
       - name: Install Node dependencies
-        run: npm ci
+        run: npm install
 
       - name: Install Python for build:py step
         uses: actions/setup-python@v4
