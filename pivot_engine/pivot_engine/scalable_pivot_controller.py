@@ -137,7 +137,7 @@ class ScalablePivotController(PivotController):
         # HierarchicalVirtualScrollManager expects an IbisPlanner instance
         # Lock removed as manager is now stateless/thread-safe
         self.virtual_scroll_manager = HierarchicalVirtualScrollManager(
-            self.planner, self.cache, self.materialized_hierarchy_manager, lock=self.execution_lock
+            self.planner, self.cache, self.materialized_hierarchy_manager
         )
         # ProgressiveDataLoader expects an Ibis connection
         self.progressive_loader = ProgressiveDataLoader(con, self.cache)
@@ -145,11 +145,10 @@ class ScalablePivotController(PivotController):
 
         # Initialize real pattern analyzer for intelligent prefetching
         self.intelligent_prefetch_manager = IntelligentPrefetchManager(
-            session_tracker=None,  # Would be injected
-            pattern_analyzer=UserPatternAnalyzer(cache=self.cache),  # Real pattern analyzer
-            backend=con, # Prefetch Manager expects an Ibis connection
+            session_tracker=None,
+            pattern_analyzer=UserPatternAnalyzer(cache=self.cache),
+            backend=con,
             cache=self.cache,
-            virtual_scroll_manager=self.virtual_scroll_manager
         )
         # PruningManager expects an Ibis connection
         self.pruning_manager = HierarchyPruningManager(con)

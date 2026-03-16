@@ -8,9 +8,9 @@ from enum import Enum
 import asyncio
 import logging
 import math
-from pivot_engine.scalable_pivot_controller import ScalablePivotController
-from pivot_engine.types.pivot_spec import PivotSpec, Measure
-from pivot_engine.security import User, apply_rls_to_spec
+from .scalable_pivot_controller import ScalablePivotController
+from .types.pivot_spec import PivotSpec, Measure
+from .security import User, apply_rls_to_spec
 
 _adapter_logger = logging.getLogger("pivot_engine.adapter")
 
