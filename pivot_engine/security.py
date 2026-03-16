@@ -3,12 +3,26 @@ security.py - Security and Authentication for Scalable Pivot Engine
 """
 import os
 from typing import Optional, List, Dict, Any
-from fastapi import HTTPException, Security, status, Depends
-from fastapi.security import APIKeyHeader
-from pydantic import BaseModel
 
-# Define the API Key header scheme
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+try:
+    from fastapi import HTTPException, Security, status, Depends
+    from fastapi.security import APIKeyHeader
+    from pydantic import BaseModel
+    _FASTAPI_AVAILABLE = True
+    api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+except ImportError:
+    _FASTAPI_AVAILABLE = False
+    # Minimal stubs so the module can be imported without fastapi/pydantic
+    HTTPException = None
+    Security = lambda x: None  # noqa: E731
+    status = type("status", (), {"HTTP_401_UNAUTHORIZED": 401})()
+    Depends = lambda x: None  # noqa: E731
+    api_key_header = None
+
+    class BaseModel:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
 
 class UserRole(str):
     ADMIN = "admin"
@@ -22,7 +36,7 @@ class User(BaseModel):
     scopes: List[str] = []
     attributes: Dict[str, Any] = {} # For RLS, e.g. {'region': 'North'}
 
-def get_api_key(api_key_header: str = Security(api_key_header)) -> str:
+def get_api_key(api_key_header: str = None) -> str:
     """
     Validate API Key and return it.
     """
@@ -39,7 +53,7 @@ def get_api_key(api_key_header: str = Security(api_key_header)) -> str:
         detail="Invalid or missing API Key"
     )
 
-def get_current_user(api_key: str = Security(get_api_key)) -> User:
+def get_current_user(api_key: str = None) -> "User":
     """
     Get the current user based on the API Key.
     In a real system, this would look up the key in a DB.
@@ -65,7 +79,7 @@ def get_current_user(api_key: str = Security(get_api_key)) -> User:
 
 from pivot_engine.types.pivot_spec import PivotSpec
 
-def get_user_with_rls(user: User = Depends(get_current_user)) -> User:
+def get_user_with_rls(user: "User" = None) -> "User":
     """
     Dependency to get user with RLS context applied.
     """
