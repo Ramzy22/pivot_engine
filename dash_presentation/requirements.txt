@@ -1,5 +1,0 @@
-dash>=2.9.0
-pandas>=1.5.0
-pyarrow>=10.0.0
-# The pivot engine library (install from parent)
-../

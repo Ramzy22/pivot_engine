@@ -198,3 +198,41 @@ node_modules/
 # AI assistant internals
 .claude/
 .codex/
+
+# AI planning and internal files
+.planning/
+.claude/
+.codex/
+
+# Development artifacts
+debug_*.py
+debug_*.js
+reproduce_*.py
+fix_report*.md
+final_fix_report.md
+implementation_report.md
+final_verification.py
+verify_*.py
+benchmark.py
+compare_methods.py
+test_arrow*.py
+test_async*.py
+test_backend*.py
+test_connection*.py
+test_cursor*.py
+test_exact*.py
+test_final*.py
+test_hierarchical*.py
+test_scalable*.py
+test_totals*.py
+test_with*.py
+test_column_tree*.js
+test_expand*.py
+test_filtering*.py
+test_fix*.py
+test_flat*.py
+test_ifelse*.py
+test_tanstack*.py
+test_virtual*.py
+*.png
+*.jpg
