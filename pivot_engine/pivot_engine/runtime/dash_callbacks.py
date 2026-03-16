@@ -7,8 +7,12 @@ import traceback
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, Optional, Set
 
-import dash
-from dash import Input, Output, State, no_update
+try:
+    import dash
+    from dash import Input, Output, State, no_update
+except ImportError:
+    dash = None
+    Input = Output = State = no_update = None
 
 from .models import PivotRequestContext, PivotViewState
 
