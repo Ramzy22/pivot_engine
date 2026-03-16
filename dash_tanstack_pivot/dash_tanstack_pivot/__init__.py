@@ -5,7 +5,7 @@ import sys as _sys
 import json
 try:
     from importlib.metadata import version as _pkg_version
-    __version__ = _pkg_version("dash-tanstack-pivot")
+    __version__ = _pkg_version("pivot-engine")
 except Exception:
     __version__ = None
 

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `dash-tanstack-pivot` will be documented in this file.
+All notable changes to `pivot-engine` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Column display UI states: resize, pin, hide/show with localStorage persistence
 - Ibis backend abstraction supporting DuckDB, ClickHouse, PostgreSQL, BigQuery, Snowflake, and more
 - Arrow-native zero-copy data transfer between backend and Dash component
-- Redis-optional caching layer (`pip install dash-tanstack-pivot[redis]`)
+- Redis-optional caching layer (`pip install pivot-engine[redis]`)
 - `load_data_from_arrow`: register PyArrow tables directly into the in-memory DuckDB backend
 - Comprehensive test suite: session gate, runtime service, Dash callback registration, multi-instance isolation, packaging smoke
 
@@ -55,5 +55,5 @@ Initial pre-release scaffolding. See `## [Unreleased]` above for full change lis
 
 ---
 
-[Unreleased]: https://github.com/pivot-engine/dash-tanstack-pivot/compare/HEAD
-[0.1.0]: https://github.com/pivot-engine/dash-tanstack-pivot/releases/tag/v0.1.0
+[Unreleased]: https://github.com/pivot-engine/pivot-engine/compare/HEAD
+[0.1.0]: https://github.com/pivot-engine/pivot-engine/releases/tag/v0.1.0
