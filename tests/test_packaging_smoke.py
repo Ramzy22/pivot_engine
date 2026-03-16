@@ -19,7 +19,10 @@ Full deterministic release gate (install + import + multi-instance regression):
 
 import pathlib
 import sys
-import tomllib
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib
 
 
 # ---------------------------------------------------------------------------

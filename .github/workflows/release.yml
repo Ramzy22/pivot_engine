@@ -23,7 +23,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip "setuptools<71" duckdb pyarrow ibis-framework[duckdb] pandas dash pytest build twine
+          python -m pip install --upgrade pip "setuptools<71" duckdb pyarrow "ibis-framework[duckdb]" pandas dash pytest tomli build twine
 
       - name: Install pivot_engine (editable)
         run: |
